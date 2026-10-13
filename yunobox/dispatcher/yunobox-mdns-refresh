@@ -1,0 +1,54 @@
+#!/bin/sh
+# /usr/local/sbin/yunobox-mdns-refresh
+#
+# Attend que l'interface ait vraiment une adresse, puis relance yunomdns.
+# Appele de facon detachee par le dispatcher NetworkManager, ou a la main.
+
+set -u
+
+IFACE="${1:-inconnue}"
+ACTION="${2:-manuel}"
+UNIT=yunomdns
+STATE_DIR=/var/lib/yunobox
+TAG=yunobox-mdns
+
+log() {
+    logger -t "$TAG" -- "$*"
+}
+
+if ! systemctl cat "${UNIT}.service" >/dev/null 2>&1; then
+    log "unite ${UNIT}.service introuvable, rien a faire"
+    exit 0
+fi
+
+# Attendre une adresse IPv4 sur l'interface, 30 s au maximum. Relancer yunomdns
+# avant que l'interface soit adressee ne sert a rien : il republierait sur une
+# pile reseau incomplete.
+i=0
+while [ "$i" -lt 60 ]; do
+    if ip -4 addr show dev "$IFACE" 2>/dev/null | grep -q 'inet '; then
+        break
+    fi
+    i=$((i + 1))
+    sleep 0.5
+done
+
+if [ "$i" -ge 60 ]; then
+    log "pas d'adresse IPv4 sur $IFACE apres 30 s, relance tout de meme"
+fi
+
+sleep 1   # laisser la resolution se stabiliser
+
+if systemctl restart "$UNIT" >/dev/null 2>&1; then
+    MSG="relance apres « $ACTION » sur $IFACE"
+else
+    MSG="ECHEC de relance apres « $ACTION » sur $IFACE"
+fi
+log "$MSG"
+
+# Trace lue par l'interface web.
+mkdir -p "$STATE_DIR" 2>/dev/null || true
+printf '%s — %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$MSG" \
+    > "$STATE_DIR/mdns-last" 2>/dev/null || true
+
+exit 0

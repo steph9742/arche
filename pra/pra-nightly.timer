@@ -1,0 +1,21 @@
+# Déclenchement nocturne de la réplication, sur l'ARCHE uniquement.
+#
+# Ce fichier appartient au dépôt, et non à la seule machine : un calendrier qui
+# n'existe que sur place fait reconstruire depuis les sources un dispositif
+# complet et INERTE — le service installé, jamais déclenché, et la réplication
+# silencieusement arrêtée. Le calendrier fait partie du dispositif.
+#
+# 02:10 : après la sauvegarde YunoHost de la production (00:00) et son instantané
+# Docker (01:00), avec de la marge pour une sauvegarde qui déborde.
+[Unit]
+Description=Réplication nocturne du PRA (arche)
+Documentation=file:/usr/local/sbin/pra_nightly.sh
+
+[Timer]
+OnCalendar=*-*-* 02:10:00
+# Persistent : si l'arche était éteinte à l'heure dite — batterie, maintenance —
+# la réplication se lance au démarrage suivant au lieu d'être perdue.
+Persistent=true
+
+[Install]
+WantedBy=timers.target

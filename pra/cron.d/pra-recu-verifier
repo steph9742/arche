@@ -1,0 +1,21 @@
+# L'ARCHE A-T-ELLE DONNÉ SIGNE DE VIE ? — côté production.
+#
+# L'arche dépose un reçu chez nous après chaque restauration, puis s'éteint. Son
+# silence est ambigu sans ce contrôle : rien ne distingue « tout va bien » de
+# « elle ne s'est pas réveillée », et l'on peut l'ignorer des jours.
+#
+# DEUX PASSAGES, DEUX RÔLES DISTINCTS :
+#
+#   — toutes les 15 min, « --publier » : rafraîchit /pra/etat.json, l'API sans
+#     jeton que lit la supervision. Aucune alerte : une alerte qui se répète
+#     tous les quarts d'heure cesse d'être lue.
+#   — à 08:00, le passage complet : il alerte sur Talk. Cette heure-là parce
+#     qu'elle tombe après la nuit de l'arche (réveil 02:00, restauration jusque
+#     vers 03:00) et au début de la journée, devant quelqu'un.
+#
+# Rien ici ne contacte l'arche et rien ne le peut : on constate l'absence d'un
+# fichier local. C'est la règle de fond du PRA — l'arche appelle, jamais l'inverse.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+*/15 * * * * root /usr/local/sbin/pra_recu_verifier.sh --publier
+0 8 * * *    root /usr/local/sbin/pra_recu_verifier.sh

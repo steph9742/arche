@@ -1,0 +1,61 @@
+#!/bin/sh
+# /etc/NetworkManager/dispatcher.d/99-yunobox-mdns
+#
+# Relance yunomdns a chaque changement de reseau : sans cela, les noms .local
+# cessent de resoudre apres une connexion a un nouveau reseau.
+#
+# NetworkManager appelle ce script avec $1 = interface, $2 = action, et tue les
+# scripts trop longs. On se contente donc de filtrer, d'anti-rebondir, puis de
+# detacher le travail reel dans yunobox-mdns-refresh.
+#
+# Pas de « set -e » ici : l'idiome « [ test ] && exit 0 » renverrait un code
+# non nul quand le test est faux, ce qui ferait avorter le script et polluerait
+# le journal de NetworkManager.
+
+set -u
+
+IFACE="${1:-}"
+ACTION="${2:-}"
+
+# Seuls ces evenements signalent un reseau reellement (re)disponible.
+case "$ACTION" in
+    up|dhcp4-change|dhcp6-change|connectivity-change) ;;
+    *) exit 0 ;;
+esac
+
+if [ -z "$IFACE" ] || [ "$IFACE" = "lo" ]; then
+    exit 0
+fi
+
+# Anti-rebond : NetworkManager emet plusieurs evenements d'affilee pour une
+# seule bascule de reseau. On n'agit qu'une fois par fenetre de 15 s.
+STAMP=/run/yunobox-mdns.stamp
+NOW=$(date +%s)
+LAST=0
+if [ -r "$STAMP" ]; then
+    LAST=$(cat "$STAMP" 2>/dev/null || echo 0)
+    case "$LAST" in
+        ''|*[!0-9]*) LAST=0 ;;
+    esac
+fi
+if [ $((NOW - LAST)) -lt 15 ]; then
+    exit 0
+fi
+printf '%s\n' "$NOW" > "$STAMP" 2>/dev/null || true
+
+WORKER=/usr/local/sbin/yunobox-mdns-refresh
+if [ ! -x "$WORKER" ]; then
+    logger -t yunobox-mdns -- "worker absent : $WORKER"
+    exit 0
+fi
+
+# Detache, pour ne pas se faire tuer par le delai de NetworkManager.
+if command -v systemd-run >/dev/null 2>&1; then
+    systemd-run --no-block --collect --quiet \
+        --description="Relance yunomdns apres changement reseau" \
+        "$WORKER" "$IFACE" "$ACTION" >/dev/null 2>&1 || true
+else
+    setsid "$WORKER" "$IFACE" "$ACTION" </dev/null >/dev/null 2>&1 &
+fi
+
+exit 0

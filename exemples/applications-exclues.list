@@ -1,0 +1,8 @@
+# Applications présentes en production mais volontairement écartées.
+#   id: raison
+#
+# La raison est relue : elle explique un choix, elle n'est pas décorative.
+
+gitlab: plusieurs gigaoctets de mémoire, irréaliste sur la machine de secours
+onlyoffice: trop lourd pour l'architecture du réplica
+cyberchef: sans données à restaurer

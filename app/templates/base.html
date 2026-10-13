@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}Arche{% endblock %}</title>
+  {# La version force le rechargement après un déploiement : sans elle le
+     navigateur sert l'ancienne feuille et l'on croit à un défaut du code. #}
+  <link rel="stylesheet" href="{{ base }}/static/style.css?v={{ version_style }}">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="{{ base }}/">
+      {%- if role == "arche" %}⚓&nbsp; Arche{% else %}🗄&nbsp; Arche · Production{% endif -%}
+    </a>
+    {% if authed %}
+    <nav>
+      <a href="{{ base }}/" {{ 'class=actif' if chemin == '/' }}>État</a>
+      <a href="{{ base }}/reglages" {{ 'class=actif' if chemin.startswith('/reglages') }}>Réglages</a>
+      {% if role == 'arche' %}
+      <a href="{{ base }}/sante" {{ 'class=actif' if chemin.startswith('/sante') }}>Santé</a>
+      <a href="{{ base }}/annuaire" {{ 'class=actif' if chemin.startswith('/annuaire') }}>Annuaire</a>
+      <a href="{{ base }}/depot" {{ 'class=actif' if chemin.startswith('/depot') }}>Dépôt</a>
+      {% endif %}
+      <a href="{{ base }}/journal/{{ 'nightly' if role == 'arche' else 'sauvegarde' }}"
+         {{ 'class=actif' if chemin.startswith('/journal') }}>Journaux</a>
+      {% if auth_mode != "proxy" %}
+        <a href="{{ base }}/logout" class="discret">Déconnexion</a>
+      {% endif %}
+    </nav>
+    {% endif %}
+  </header>
+
+  <main class="conteneur">
+    {% if flashes %}
+      <div class="messages">
+        {% for categorie, message in flashes %}
+          <div class="message message-{{ categorie }}"><span>{{ message }}</span></div>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="pied">
+    <span class="discret petit">Arche — Plan de reprise d'activité · Cellule cyber</span>
+  </footer>
+</body>
+</html>

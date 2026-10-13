@@ -1,0 +1,45 @@
+###############################################################################
+# Unité PRA Nightly — version 2
+#
+# Déclenchement : la carte est éteinte la majeure partie du temps. L'alarme RTC
+# la rallume, systemd atteint multi-user.target, et cette unité lance le PRA.
+# Il n'y a donc PAS de timer — un timer ne servirait à rien sur une machine
+# éteinte au moment où il devrait se déclencher.
+#
+# À activer :  systemctl daemon-reload && systemctl enable pra-nightly.service
+#
+# Une unité laissée « disabled » ne tourne jamais automatiquement, et cela ne
+# se voit pas. La cause en est souvent le WantedBy=multi-user.target ci-dessous :
+# il déclenche à CHAQUE démarrage, y compris pour une intervention manuelle, et
+# provoque donc une restauration puis une extinction intempestives — on finit
+# par désactiver l'unité pour s'en protéger. La fenêtre horaire du script est la
+# vraie réponse à ce problème.
+# pra_nightly.sh v2 règle ça par une fenêtre horaire (1h-5h par défaut) :
+# hors fenêtre, il sort sans rien faire et sans éteindre. L'unité peut donc
+# rester activée en permanence sans gêner le travail sur la machine.
+###############################################################################
+
+[Unit]
+Description=PRA Nightly Restore (réplica de la production)
+Documentation=file:/usr/local/sbin/pra_nightly.sh
+After=network-online.target
+Wants=network-online.target
+# On ne veut pas courir contre l'horloge réseau : une heure fausse fausserait la
+# fenêtre horaire et le nom de l'archive du jour.
+After=time-sync.target
+Wants=time-sync.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash /usr/local/sbin/pra_nightly.sh
+# Aucune limite de durée : transfert de 12 Go puis restauration YunoHost.
+TimeoutStartSec=0
+# Le script gère lui-même son extinction et son verrou ; systemd ne doit pas
+# le relancer ni le tuer.
+Restart=no
+KillMode=mixed
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

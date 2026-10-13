@@ -1,0 +1,14 @@
+[Unit]
+Description=Régénère la page de secours au démarrage puis toutes les dix minutes
+
+# Dix minutes est un compromis : assez court pour qu'un annuaire fraîchement
+# saisi apparaisse pendant qu'on y pense, assez long pour ne rien coûter. Les
+# changements de réseau, eux, déclenchent une régénération immédiate par le hook
+# de YunoBox — c'est le cas qui presse.
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=10min
+Persistent=false
+
+[Install]
+WantedBy=timers.target

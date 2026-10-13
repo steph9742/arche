@@ -1,0 +1,24 @@
+[Unit]
+Description=Arche — pilotage et suivi du plan de reprise d'activité
+After=network.target
+
+[Service]
+Type=simple
+User=archeapp
+Group=archeapp
+WorkingDirectory=/opt/arche
+EnvironmentFile=/etc/arche/arche.env
+ExecStart=/opt/arche/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8770
+Restart=on-failure
+RestartSec=3
+
+# Pas de durcissement du système de fichiers (ProtectSystem, PrivateTmp…) : la
+# webapp lance le helper root via sudo, et ce processus enfant HÉRITE du
+# namespace du service. Un ProtectSystem=full monterait /etc en lecture seule
+# pour le helper aussi, qui ne pourrait plus écrire /etc/pra/pra.conf.
+# La sécurité repose sur le compte non privilégié « archeapp » et sur la règle
+# sudo étroite vers un helper qui valide strictement ses entrées — pas sur un
+# bac à sable. NoNewPrivileges doit rester désactivé pour autoriser sudo.
+
+[Install]
+WantedBy=multi-user.target

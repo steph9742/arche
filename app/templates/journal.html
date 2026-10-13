@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block title %}Journaux — Arche{% endblock %}
+{% block content %}
+<div class="ligne-titre">
+  <h1>Journaux</h1>
+  <span class="discret petit mono">{{ journal.fichier }}</span>
+</div>
+
+{% set onglets = [("nightly","Réplication nocturne"), ("restauration","Restauration YunoHost"),
+                  ("docker","Restauration Docker"), ("alertes","Alertes"),
+                  ("audit","Qui a fait quoi")]
+     if role == "arche" else
+     [("sauvegarde","Sauvegarde YunoHost"), ("docker-instantane","Instantané Docker"),
+      ("recus","Reçus de l'arche"), ("alertes","Alertes"), ("audit","Qui a fait quoi")] %}
+{# Un seul onglet pour la sauvegarde : cron et lancement manuel écrivent le MÊME
+   fichier, deux onglets auraient affiché deux fois la même chose. La clé
+   « sauvegarde-manuelle » reste servie par le helper pour les liens déjà en
+   circulation, elle n'a simplement plus d'onglet à elle. #}
+
+<div class="onglets">
+  {% for id, libelle in onglets %}
+    <a href="{{ base }}/journal/{{ id }}" {{ 'class=actif' if quoi == id }}>{{ libelle }}</a>
+  {% endfor %}
+</div>
+
+<div class="carte">
+  {% if journal.absent %}
+    <p class="discret" style="margin:0">
+      Ce journal n'existe pas encore — l'opération correspondante n'a jamais été lancée.
+    </p>
+  {% elif not journal.lignes %}
+    <p class="discret" style="margin:0">Journal vide.</p>
+  {% else %}
+    <div class="journal">{% for l in journal.lignes -%}
+<div class="{% if 'ÉCHEC' in l or 'ANOMALIE' in l or 'ERROR' in l %}l-erreur{% elif 'ATTENTION' in l %}l-attention{% elif 'succès' in l or 'intact' in l or 'conforme' in l %}l-ok{% elif '====' in l %}l-titre{% endif %}">{{ l }}</div>
+{%- endfor %}</div>
+    <p class="aide">{{ journal.lignes|length }} dernières lignes.</p>
+  {% endif %}
+</div>
+{% endblock %}

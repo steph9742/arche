@@ -1,0 +1,405 @@
+/* ─────────────────────────────────────────────────────────────────────────────
+   Arche — feuille de style
+   ─────────────────────────────────────────────────────────────────────────────
+   C'est une console d'exploitation, pas une vitrine : la densité d'information
+   et la lisibilité d'un état d'un coup d'œil priment sur l'ornement. La couleur
+   ne décore pas, elle qualifie — vert, ambre et rouge ne servent qu'à dire dans
+   quel état se trouve le dispositif.
+   ───────────────────────────────────────────────────────────────────────────── */
+
+:root {
+  --fond: #f4f5f7;
+  --carte: #ffffff;
+  --carte-2: #fafbfc;
+  --encre: #1a1f28;
+  --encre-2: #4a5462;
+  --discret: #77818f;
+  --bord: #e3e7ec;
+  --bord-fort: #cfd6de;
+
+  --primaire: #2563eb;
+  --primaire-fond: #eff5ff;
+  --primaire-encre: #ffffff;
+
+  --ok: #15803d;        --ok-fond: #ecfdf3;        --ok-bord: #a7e8bf;
+  --attention: #a16207; --attention-fond: #fffaeb; --attention-bord: #f3d78a;
+  --erreur: #b42318;    --erreur-fond: #fef3f2;    --erreur-bord: #f7b9b3;
+  --info: #175cd3;      --info-fond: #eff8ff;      --info-bord: #b2ddff;
+
+  --rayon: 10px;
+  --rayon-s: 7px;
+  --ombre: 0 1px 2px rgba(16, 24, 40, .05);
+  --ombre-2: 0 4px 12px -2px rgba(16, 24, 40, .10), 0 2px 4px -2px rgba(16, 24, 40, .06);
+  --police: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fond: #0f1319;
+    --carte: #171c24;
+    --carte-2: #1c222c;
+    --encre: #e8ecf1;
+    --encre-2: #b3bcc8;
+    --discret: #8b95a3;
+    --bord: #262d38;
+    --bord-fort: #384252;
+
+    --primaire: #5b8def;
+    --primaire-fond: #16233a;
+
+    --ok: #6ee7a0;        --ok-fond: #0d2a1a;        --ok-bord: #1e5638;
+    --attention: #fbd38d; --attention-fond: #2e2410; --attention-bord: #5c4718;
+    --erreur: #fca5a0;    --erreur-fond: #2d1512;    --erreur-bord: #5e2620;
+    --info: #93c5fd;      --info-fond: #11243c;      --info-bord: #1e416e;
+
+    --ombre: 0 1px 2px rgba(0, 0, 0, .4);
+    --ombre-2: 0 4px 14px -2px rgba(0, 0, 0, .5);
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--fond);
+  color: var(--encre);
+  font: 15px/1.6 var(--police);
+  -webkit-font-smoothing: antialiased;
+}
+
+a { color: var(--primaire); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+h1 { font-size: 1.55rem; line-height: 1.25; letter-spacing: -.015em; margin: 0; }
+h2 { font-size: 1.06rem; line-height: 1.3; margin: 0 0 .15rem; letter-spacing: -.005em; }
+h3 { font-size: .95rem; margin: 0 0 .2rem; }
+
+.discret { color: var(--discret); }
+.petit   { font-size: .87rem; }
+.mono, code, pre { font-family: var(--mono); font-size: .86em; }
+code {
+  background: var(--carte-2); border: 1px solid var(--bord);
+  border-radius: 5px; padding: .08em .34em;
+}
+
+/* ─── Barre supérieure ────────────────────────────────────────────────────── */
+
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 2rem;
+  padding: .7rem 1.5rem;
+  background: var(--carte);
+  border-bottom: 1px solid var(--bord);
+}
+.brand {
+  font-weight: 700; font-size: 1rem; color: var(--encre);
+  letter-spacing: -.01em; white-space: nowrap;
+}
+.brand:hover { text-decoration: none; }
+.topbar nav { display: flex; gap: .3rem; margin-left: auto; flex-wrap: wrap; }
+.topbar nav a {
+  padding: .38rem .7rem; border-radius: var(--rayon-s);
+  color: var(--encre-2); font-weight: 550; font-size: .92rem;
+}
+.topbar nav a:hover { background: var(--carte-2); color: var(--encre); text-decoration: none; }
+.topbar nav a.actif { background: var(--primaire-fond); color: var(--primaire); }
+
+.conteneur { max-width: 940px; margin: 1.75rem auto 4rem; padding: 0 1.25rem; }
+.pied { text-align: center; padding: 0 1rem 2.5rem; }
+
+.ligne-titre {
+  display: flex; align-items: center; gap: 1rem;
+  justify-content: space-between; flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+
+/* ─── Cartes ──────────────────────────────────────────────────────────────── */
+
+.carte {
+  background: var(--carte);
+  border: 1px solid var(--bord);
+  border-radius: var(--rayon);
+  box-shadow: var(--ombre);
+  padding: 1.15rem 1.35rem;
+  margin: 0 0 1.1rem;
+}
+.carte > h2 + .petit { margin-top: 0; margin-bottom: 1rem; }
+.carte.etroite { max-width: 400px; margin: 4rem auto; box-shadow: var(--ombre-2); }
+
+/* ─── Tuiles d'état ───────────────────────────────────────────────────────── */
+
+.tuiles {
+  display: grid; gap: .85rem; margin-bottom: 1.1rem;
+  grid-template-columns: repeat(auto-fit, minmax(196px, 1fr));
+}
+.tuile {
+  background: var(--carte); border: 1px solid var(--bord);
+  border-radius: var(--rayon); box-shadow: var(--ombre);
+  padding: .9rem 1.05rem;
+}
+.tuile .libelle {
+  color: var(--discret); font-size: .72rem; font-weight: 650;
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.tuile .valeur {
+  font-size: 1.5rem; font-weight: 680; line-height: 1.15;
+  margin: .35rem 0 .15rem; letter-spacing: -.02em;
+  font-variant-numeric: tabular-nums;
+}
+.tuile .valeur.texte { font-size: 1.02rem; font-weight: 620; letter-spacing: 0; }
+.tuile .sous { color: var(--discret); font-size: .82rem; }
+
+/* ─── Pastilles d'état ────────────────────────────────────────────────────── */
+
+.etat {
+  display: inline-flex; align-items: center; gap: .38em;
+  padding: .2em .6em .2em .5em;
+  border: 1px solid transparent; border-radius: 999px;
+  font-size: .8rem; font-weight: 620; line-height: 1.4;
+  white-space: nowrap;
+}
+.etat::before {
+  content: ""; width: .46em; height: .46em; border-radius: 50%;
+  background: currentColor; flex: none;
+}
+.etat-ok        { color: var(--ok);        background: var(--ok-fond);        border-color: var(--ok-bord); }
+.etat-attention { color: var(--attention); background: var(--attention-fond); border-color: var(--attention-bord); }
+.etat-erreur    { color: var(--erreur);    background: var(--erreur-fond);    border-color: var(--erreur-bord); }
+.etat-muet      { color: var(--discret);   background: var(--carte-2);        border-color: var(--bord); }
+
+/* ─── Messages ────────────────────────────────────────────────────────────── */
+
+.messages { margin-bottom: 1.1rem; display: grid; gap: .55rem; }
+.message {
+  border: 1px solid; border-radius: var(--rayon-s);
+  padding: .68rem .9rem; font-size: .92rem;
+  display: flex; gap: .55rem; align-items: flex-start;
+}
+.message::before { font-weight: 700; flex: none; }
+.message-success { color: var(--ok);     background: var(--ok-fond);     border-color: var(--ok-bord); }
+.message-success::before { content: "✓"; }
+.message-error   { color: var(--erreur); background: var(--erreur-fond); border-color: var(--erreur-bord); }
+.message-error::before   { content: "!"; }
+.message-info    { color: var(--info);   background: var(--info-fond);   border-color: var(--info-bord); }
+.message-info::before    { content: "i"; }
+
+/* ─── Tableaux ────────────────────────────────────────────────────────────── */
+
+.liste { width: 100%; border-collapse: collapse; }
+.liste th {
+  text-align: left; padding: .3rem .6rem .5rem 0;
+  color: var(--discret); font-size: .73rem; font-weight: 650;
+  text-transform: uppercase; letter-spacing: .05em;
+  border-bottom: 1px solid var(--bord);
+}
+.liste td {
+  padding: .52rem .6rem .52rem 0;
+  border-bottom: 1px solid var(--bord); vertical-align: middle;
+}
+.liste tr:last-child td { border-bottom: none; }
+.liste td.num, .liste th.num { text-align: right; padding-right: 0; }
+.liste td.num { font-variant-numeric: tabular-nums; }
+.defile { overflow-x: auto; }
+
+/* ─── Formulaires ─────────────────────────────────────────────────────────── */
+
+.reglage { padding: 1.05rem 0; border-bottom: 1px solid var(--bord); }
+.reglage:first-of-type { padding-top: .35rem; }
+.reglage:last-child { border-bottom: none; padding-bottom: .2rem; }
+
+label { display: block; font-weight: 600; font-size: .93rem; margin-bottom: .3rem; }
+label.case { font-weight: 400; }
+
+input[type=text], input[type=password], select, textarea {
+  width: 100%; padding: .5rem .65rem; font: inherit; font-size: .92rem;
+  color: var(--encre); background: var(--carte-2);
+  border: 1px solid var(--bord-fort); border-radius: var(--rayon-s);
+  transition: border-color .12s, box-shadow .12s;
+}
+input:focus-visible, select:focus-visible, textarea:focus-visible {
+  outline: none; border-color: var(--primaire);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--primaire) 18%, transparent);
+}
+textarea { resize: vertical; min-height: 4.5em; font-family: var(--mono); font-size: .85rem; }
+select { cursor: pointer; }
+
+.aide { color: var(--discret); font-size: .855rem; line-height: 1.5; margin: .42rem 0 0; }
+.cle {
+  display: inline-block; margin-top: .4rem;
+  font-family: var(--mono); font-size: .74rem; color: var(--discret);
+}
+
+.cases { display: grid; gap: .1rem .9rem; margin-top: .45rem;
+         grid-template-columns: repeat(auto-fit, minmax(215px, 1fr)); }
+.cases label {
+  display: flex; gap: .5rem; align-items: flex-start;
+  font-weight: 400; margin: 0; padding: .3rem .1rem;
+  border-radius: var(--rayon-s); cursor: pointer;
+}
+.cases label:hover { background: var(--carte-2); }
+.cases input[type=checkbox] { width: auto; margin: .3rem 0 0; flex: none; accent-color: var(--primaire); }
+.cases .nom { font-size: .92rem; }
+
+details.avance { margin-top: 1rem; border-top: 1px dashed var(--bord); padding-top: .3rem; }
+details.avance > summary {
+  cursor: pointer; color: var(--discret); font-weight: 600;
+  font-size: .89rem; padding: .5rem 0; list-style: none;
+}
+details.avance > summary::before { content: "▸ "; }
+details[open].avance > summary::before { content: "▾ "; }
+details.avance > summary::-webkit-details-marker { display: none; }
+
+/* ─── Boutons ─────────────────────────────────────────────────────────────── */
+
+.actions { display: flex; gap: .6rem; flex-wrap: wrap; align-items: center; }
+.actions form { margin: 0; }
+
+.bouton {
+  display: inline-flex; align-items: center; gap: .4rem;
+  padding: .48rem .9rem; font: inherit; font-size: .92rem; font-weight: 600;
+  color: var(--encre); background: var(--carte);
+  border: 1px solid var(--bord-fort); border-radius: var(--rayon-s);
+  cursor: pointer; white-space: nowrap;
+  transition: background .12s, border-color .12s;
+}
+.bouton:hover { background: var(--carte-2); border-color: var(--discret); text-decoration: none; }
+.bouton:disabled { opacity: .5; cursor: not-allowed; }
+.bouton-primaire {
+  color: var(--primaire-encre); background: var(--primaire); border-color: var(--primaire);
+}
+.bouton-primaire:hover { filter: brightness(1.08); }
+.bouton-danger { color: var(--erreur); border-color: var(--erreur-bord); }
+.bouton-danger:hover { background: var(--erreur-fond); border-color: var(--erreur); }
+
+/* ─── Journaux ────────────────────────────────────────────────────────────── */
+
+.onglets {
+  display: flex; gap: .25rem; flex-wrap: wrap; margin-bottom: 1.1rem;
+  border-bottom: 1px solid var(--bord); padding-bottom: .1rem;
+}
+.onglets a {
+  padding: .45rem .8rem; border-radius: var(--rayon-s) var(--rayon-s) 0 0;
+  color: var(--encre-2); font-weight: 550; font-size: .91rem;
+  border-bottom: 2px solid transparent; margin-bottom: -1px;
+}
+.onglets a:hover { background: var(--carte-2); text-decoration: none; }
+.onglets a.actif { color: var(--primaire); border-bottom-color: var(--primaire); }
+
+.journal {
+  background: #0c0f14; color: #cdd4dd;
+  border: 1px solid var(--bord); border-radius: var(--rayon-s);
+  padding: .85rem 1rem; margin: 0;
+  font-family: var(--mono); font-size: .795rem; line-height: 1.55;
+  max-height: 64vh; overflow: auto;
+  white-space: pre-wrap; word-break: break-word;
+}
+.journal div { padding-left: 1.4em; text-indent: -1.4em; }
+.journal .l-erreur    { color: #f78a80; }
+.journal .l-attention { color: #f0c674; }
+.journal .l-ok        { color: #93d69a; }
+.journal .l-titre     { color: #8ab4f8; font-weight: 600; }
+
+/* ─── Adaptation aux petits écrans ────────────────────────────────────────── */
+
+@media (max-width: 620px) {
+  /* En vue étroite, la barre se replie proprement sur deux lignes : le titre au
+     dessus, la navigation dessous et sur toute la largeur. Laisser flex décider
+     produisait un enchevêtrement du titre et des onglets. */
+  .topbar { flex-wrap: wrap; padding: .55rem .9rem; gap: .1rem 0; }
+  .brand { width: 100%; padding: .15rem 0 .35rem; }
+  .topbar nav { margin-left: 0; width: 100%; gap: .1rem; }
+  .topbar nav a { padding: .34rem .55rem; font-size: .88rem; }
+  .conteneur { padding: 0 .9rem; margin-top: 1.2rem; }
+  .carte { padding: 1rem 1.05rem; }
+  h1 { font-size: 1.32rem; }
+  .cases { grid-template-columns: 1fr; }
+  .actions .bouton, .actions form { width: 100%; }
+  .actions .bouton { justify-content: center; }
+}
+
+/* ---------------- annuaire de crise ----------------
+   Un tableau de saisie, pas un tableau de lecture : les champs occupent toute
+   la cellule pour qu'on tape sans viser. */
+table.annuaire { width: 100%; border-collapse: collapse; margin: 0 0 .2rem; }
+table.annuaire th { text-align: left; font-size: .85rem; font-weight: 500;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--dim, #667);
+  padding: .4rem .5rem; border-bottom: 1px solid var(--hair, #ddd); }
+table.annuaire td { padding: .15rem .25rem; }
+table.annuaire input { width: 100%; box-sizing: border-box; font: inherit;
+  padding: .45rem .55rem; }
+ul.suggestions { line-height: 1.7; }
+p.aide { color: var(--dim, #667); font-size: .9rem; }
+.actions-annuaire { margin-top: 1rem; padding-top: .9rem;
+  border-top: 1px solid var(--bord); }
+.actions-annuaire .discret { margin-left: auto; }
+/* Une ligne qui apparaît sans transition donne l'impression d'un défaut
+   d'affichage : le fondu dit que c'est bien le geste qu'on vient de faire. */
+@keyframes annuaire-apparait {
+  from { background: var(--acc-soft, rgba(79,195,176,.14)); opacity: .35; }
+  to   { background: transparent; opacity: 1; }
+}
+table.annuaire tr.nouvelle { animation: annuaire-apparait .55s ease-out; }
+@media (prefers-reduced-motion: reduce) {
+  table.annuaire tr.nouvelle { animation: none; }
+}
+
+/* ---------------- préréglages de durée ----------------
+   Des boutons plats, nettement secondaires par rapport au champ : ils le
+   remplissent, ils ne valident rien. */
+.prereglages { display: flex; align-items: center; gap: .5rem;
+  flex-wrap: wrap; margin-top: .5rem; }
+.prereglages span { color: var(--dim, #667); font-size: .85rem; margin-right: .2rem; }
+.prereglages button { font: inherit; font-size: .85rem; padding: .3rem .7rem;
+  border: 1px solid var(--hair, #ccc); border-radius: 999px;
+  background: transparent; color: inherit; cursor: pointer;
+  transition: background .15s, border-color .15s; }
+.prereglages button:hover { background: var(--acc-soft, rgba(79,195,176,.12));
+  border-color: var(--acc, #127f6e); }
+.prereglages button.effacer { margin-left: auto; color: var(--dim, #667); }
+
+/* ---------------- annuaire de crise ----------------
+   Le tableau est un formulaire, pas un rapport : les champs occupent toute la
+   cellule, la bordure n'apparaît qu'au survol pour ne pas quadriller la page. */
+table.annuaire { border-radius: .7rem; overflow: hidden; }
+table.annuaire thead th { background: var(--surf2, rgba(127,127,127,.06)); }
+table.annuaire tbody tr { transition: background .15s; }
+table.annuaire tbody tr:hover { background: var(--surf2, rgba(127,127,127,.045)); }
+/* Une ligne vide doit SE VOIR : sans bordure visible, on ne sait pas qu'il y a
+   un champ à remplir, et le tableau semble s'arrêter à la dernière ligne
+   saisie. C'était le défaut de la première version. */
+table.annuaire input { border: 1px solid var(--bord); border-radius: var(--rayon-s);
+  background: var(--fond); transition: border-color .12s, background .12s; }
+table.annuaire input:hover { border-color: var(--bord-fort); }
+table.annuaire input:focus { border-color: var(--primaire); background: var(--carte);
+  outline: none; box-shadow: 0 0 0 3px color-mix(in srgb, var(--primaire) 18%, transparent); }
+table.annuaire input::placeholder { color: var(--discret); }
+table.annuaire td:first-child input { font-weight: 600; }
+/* La dernière ligne, toujours vierge, est légèrement estompée : elle se lit
+   comme une invitation plutôt que comme une donnée manquante. */
+table.annuaire tbody tr:last-child input { border-style: dashed; }
+
+/* ─── Dépôt de secours ──────────────────────────────────────────────────── */
+table.depot { width: 100%; border-collapse: collapse; margin: .4rem 0; }
+table.depot th { text-align: left; font-size: .82rem; font-weight: 500;
+  text-transform: uppercase; letter-spacing: .04em; color: var(--discret);
+  padding: .35rem .5rem; border-bottom: 1px solid var(--bord); }
+table.depot td { padding: .55rem .5rem; border-bottom: 1px solid var(--bord); }
+table.depot .n { text-align: right; font-variant-numeric: tabular-nums; }
+table.depot .q { display: block; color: var(--discret); font-size: .82rem;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+table.depot tr.total td { border-bottom: 0; padding-top: .8rem; }
+pre.depot-journal { max-height: 16rem; overflow-y: auto; font-size: .84rem; }
+
+/* ─── Options de restauration ───────────────────────────────────────────── */
+.options-restauration { border: 1px solid var(--bord); border-radius: var(--rayon-s);
+  padding: .8rem 1rem .9rem; margin: 0; }
+.options-restauration legend { font-size: .8rem; font-weight: 600; padding: 0 .4rem;
+  color: var(--discret); text-transform: uppercase; letter-spacing: .05em; }
+.options-restauration .case { display: flex; gap: .6rem; align-items: flex-start;
+  padding: .45rem 0; }
+.options-restauration .case + .case { border-top: 1px solid var(--bord); }
+.options-restauration .case input { margin-top: .25rem; flex: none; width: auto; }
+.options-restauration .case span { display: block; }
+.options-restauration .case em { display: block; font-style: normal;
+  color: var(--discret); font-size: .87rem; margin-top: .1rem; }

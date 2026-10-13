@@ -1,0 +1,21 @@
+# Exemple de reverse-proxy pour Arche, servie sur un sous-chemin.
+#
+# Sur l'arche, préférer l'application « Reverse Proxy » de YunoHost restreinte au
+# groupe des administrateurs : l'authentification est alors assurée par SSOwat en
+# amont, et la webapp peut tourner en ARCHE_AUTH_MODE=proxy (sans mot de passe
+# applicatif propre).
+#
+# Ce fichier ne sert que pour une installation nginx à la main.
+
+location /arche/ {
+    proxy_pass         http://127.0.0.1:8770;
+    proxy_http_version 1.1;
+    proxy_set_header   Host              $host;
+    proxy_set_header   X-Real-IP         $remote_addr;
+    proxy_set_header   X-Forwarded-For   $proxy_add_x_forwarded_for;
+    proxy_set_header   X-Forwarded-Proto $scheme;
+
+    # L'URL est transmise TELLE QUELLE (préfixe compris) : c'est
+    # RootPathMiddleware qui le retire côté application. Voir app/security.py.
+    proxy_read_timeout 120s;
+}

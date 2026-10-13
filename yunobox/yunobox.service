@@ -1,0 +1,25 @@
+[Unit]
+Description=YunoBox — batterie, reseaux WiFi, services YunoHost, disques
+Documentation=file:/opt/yunobox/README.md
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /opt/yunobox/yunobox.py
+Environment=YUNOBOX_HOST=0.0.0.0
+Environment=YUNOBOX_PORT=8723
+Restart=on-failure
+RestartSec=3
+
+# Root est necessaire : lecture I2C du UPS HAT, nmcli, systemctl, CLI yunohost.
+# L'acces est protege par le jeton de /etc/yunobox/token, pas par le systeme de
+# permissions — voir la section Securite du README avant d'exposer ce service.
+User=root
+ProtectHome=yes
+ProtectKernelTunables=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+
+[Install]
+WantedBy=multi-user.target

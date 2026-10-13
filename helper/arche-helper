@@ -1,0 +1,1374 @@
+#!/opt/arche/.venv/bin/python3
+"""arche-helper — opérations privilégiées de la webapp Arche (root via sudo).
+
+C'est le SEUL composant autorisé à écrire /etc/pra/pra.conf, à lire les journaux
+du PRA et à déclencher une restauration. Il applique le principe de Cert_yuno :
+**la webapp n'est jamais crue sur parole**. Tout ce qui arrive est revalidé ici,
+même si la webapp a déjà validé — elle tourne sous un compte non privilégié et
+pourrait être compromise sans que ce helper doive l'être.
+
+Sous-commandes :
+  etat                     -> état des deux volets (JSON sur stdout)
+  conf-lire                -> configuration du PRA, secrets masqués
+  conf-ecrire              -> écrit la configuration (JSON sur stdin)
+  journal <quoi> <n>       -> n dernières lignes d'un journal de la liste blanche
+  canaris <action>         -> deployer | rebaser | verifier
+  restaurer --valider|--reel  -> lance la restauration en tâche de fond
+  tester-alerte            -> envoie une notification d'essai
+
+Aucune entrée non fiable n'est jamais interpolée dans un shell : les commandes
+sont construites en LISTE et exécutées sans shell.
+"""
+
+from __future__ import annotations
+
+import argparse
+import concurrent.futures as cf
+import json
+import os
+import re
+import shutil
+import subprocess
+import sys
+import time
+from datetime import datetime
+from pathlib import Path
+
+APP_DIR = Path(os.environ.get("ARCHE_APP_DIR", "/opt/arche"))
+CONF = Path(os.environ.get("ARCHE_PRA_CONF", "/etc/pra/pra.conf"))
+ETAT_DIR = Path(os.environ.get("ARCHE_STATE_DIR", "/var/lib/pra"))
+SBIN = Path(os.environ.get("ARCHE_SBIN", "/usr/local/sbin"))
+PIDFILE = Path("/run/arche-restauration.pid")
+PIDFILE_BACKUP = Path("/run/arche-sauvegarde.pid")
+
+if str(APP_DIR) not in sys.path:
+    sys.path.insert(0, str(APP_DIR))
+
+from app.praconf import (  # noqa: E402
+    PAR_CLE,
+    SECRETS,
+    ValeurInvalide,
+    lire as conf_lire_fichier,
+    lire_hors_schema,
+    rendre,
+    valider,
+)
+
+# Liste blanche des journaux consultables. Un chemin fourni par l'appelant ne
+# doit JAMAIS servir directement : ce serait une lecture arbitraire en root.
+JOURNAUX = {
+    "nightly": Path("/var/log/pra_nightly.log"),
+    "restauration": Path("/var/log/pra_restore.log"),
+    # UN SEUL FICHIER, et c'est celui que le script écrit vraiment :
+    # yunohost_backup_daily.sh pose LOG=/var/log/yunohost_backup_daily.log,
+    # que la sauvegarde soit lancée par cron ou depuis l'interface. Les deux
+    # chemins précédents — yunohost_backup.log et pra_backup.log — n'existaient
+    # Un chemin qui n'existe sur aucune des deux machines laisse l'onglet vide
+    # en permanence, y compris après une sauvegarde parfaitement réussie.
+    # On garde les deux clés parce que l'interface redirige vers
+    # « sauvegarde-manuelle » après un lancement à la main.
+    "sauvegarde": Path("/var/log/yunohost_backup_daily.log"),
+    "sauvegarde-manuelle": Path("/var/log/yunohost_backup_daily.log"),
+    # Deux volets Docker, deux journaux, deux machines : la production prend
+    # l'instantané, l'arche le restaure. N'exposer que la restauration privait la
+    # production du seul journal qui la concerne.
+    "docker": Path("/var/log/pra_docker_restore.log"),
+    "docker-instantane": Path("/var/log/pra_docker_snapshot.log"),
+    "alertes": Path("/var/log/pra_notify.log"),
+    # Côté production : le contrôle des reçus que dépose l'arche
+    # (pra_recu_verifier.sh). Sans cette entrée, l'onglet « Reçus de l'arche »
+    # de la webapp aurait été refusé comme lecture hors liste blanche.
+    "recus": Path("/var/log/pra_recus.log"),
+    "audit": Path("/var/log/arche-audit.log"),
+}
+
+CANARIS_ACTIONS = {"deployer", "rebaser", "verifier"}
+
+
+def sortir(charge: dict, code: int = 0) -> None:
+    json.dump(charge, sys.stdout, ensure_ascii=False)
+    sys.stdout.write("\n")
+    sys.exit(code)
+
+
+def echouer(message: str) -> None:
+    """Sort en erreur avec un message JSON exploitable par la webapp."""
+    sortir({"erreur": message}, 1)
+
+
+# ── etat ────────────────────────────────────────────────────────────────────
+
+
+def _json_si_possible(chemin: Path) -> dict | None:
+    try:
+        return json.loads(chemin.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def _service(nom: str) -> str:
+    try:
+        r = subprocess.run(
+            ["systemctl", "is-active", nom], capture_output=True, timeout=10
+        )
+        return r.stdout.decode().strip() or "inconnu"
+    except Exception:
+        return "inconnu"
+
+
+def _service_enable(nom: str) -> str:
+    """« is-enabled » et non « is-active » : un minuteur ACTIF mais DÉSACTIVÉ ne
+    survivra pas au redémarrage suivant, et rien ne le signalait.
+
+    Les deux états sont indépendants et se combinent en quatre cas. Seul
+    « enabled + active » est sain ; « active + disabled » est le piège, parce
+    qu'il paraît sain aujourd'hui et ne l'est plus après un reboot.
+    """
+    try:
+        r = subprocess.run(
+            ["systemctl", "is-enabled", nom], capture_output=True, timeout=10
+        )
+        return r.stdout.decode().strip() or "inconnu"
+    except Exception:
+        return "inconnu"
+
+
+def cmd_etat(_args) -> None:
+    # DEUX LISTES SÉPARÉES, et non un seul tas de « .tar ».
+    #
+    # Le magasin contient deux familles : les archives YunoHost
+    # « AAAAMMJJ-HHMMSS.tar » et les instantanés Docker « AAAAMMJJ-docker.tar ».
+    # Les mêler faisait proposer un instantané Docker dans le sélecteur d'archive
+    # YunoHost — un choix que la validation rejette toujours, donc une option qui
+    # ne peut mener qu'à un échec.
+    archives, instantanes = [], []
+    src = Path("/transferts/backups")
+    if src.is_dir():
+        for f in sorted(src.glob("*.tar"), key=lambda p: p.stat().st_mtime, reverse=True):
+            try:
+                st = f.stat()
+                entree = {
+                    "nom": f.name,
+                    "taille": st.st_size,
+                    "date": time.strftime("%Y-%m-%d %H:%M", time.localtime(st.st_mtime)),
+                    "jour": f.name[:8] if f.name[:8].isdigit() else None,
+                }
+            except OSError:
+                continue
+            if f.name.endswith("-docker.tar"):
+                instantanes.append(entree)
+            elif re.fullmatch(r"\d{8}-\d{6}\.tar", f.name):
+                archives.append(entree)
+            # Le reste — « bookstack-pre-upgrade1.tar » et consorts — n'est ni
+            # l'un ni l'autre : ce sont les sauvegardes que YunoHost prend avant
+            # une mise à niveau. Les proposer n'aurait pas de sens.
+
+    services_morts = []
+    try:
+        r = subprocess.run(
+            ["systemctl", "list-units", "--state=failed", "--no-pager",
+             "--plain", "--no-legend"],
+            capture_output=True, timeout=15,
+        )
+        for ligne in r.stdout.decode("utf-8", "replace").splitlines():
+            unite = ligne.split()[0] if ligne.split() else ""
+            # mariadb.socket échoue par activation par socket alors que mariadb
+            # tourne : sans conséquence, on ne l'affiche pas comme un problème.
+            if unite and unite != "mariadb.socket":
+                services_morts.append(unite)
+    except Exception:
+        pass
+
+    sortir(
+        {
+            "yunohost": _json_si_possible(ETAT_DIR / "status.json"),
+            "docker": _json_si_possible(ETAT_DIR / "docker-status.json"),
+            # Côté production : l'état des reçus de l'arche TEL QUE DÉCIDÉ par
+            # pra_recu_verifier.sh. La carte affiche cette décision-là, jamais
+            # une seconde lecture des reçus qui pourrait diverger de l'alerte et
+            # de l'API publique.
+            "recu": _json_si_possible(ETAT_DIR / "recu-etat.json"),
+            "archives": archives[:12],
+            "instantanes": instantanes[:12],
+            "services_morts": services_morts,
+            "restauration_en_cours": _restauration_en_cours(),
+            "sauvegarde_en_cours": _sauvegarde_en_cours(),
+            "canaris_configures": Path(
+                os.environ.get("ARCHE_CANARY_MANIFEST", "/etc/pra/canaries.list")
+            ).exists(),
+            "timer": _service("pra-nightly.timer"),
+            "timer_enable": _service_enable("pra-nightly.timer"),
+            "prochain_reveil": _prochain_reveil(),
+        }
+    )
+
+
+def _prochain_reveil() -> str | None:
+    f = ETAT_DIR / "next-wake"
+    try:
+        return time.strftime("%Y-%m-%d %H:%M", time.localtime(int(f.read_text().strip())))
+    except Exception:
+        return None
+
+
+# ── santé réelle ────────────────────────────────────────────────────────────
+
+
+def _sonder(url: str, hote: str | None = None, delai: int = 6) -> str:
+    """Le code HTTP réel, ou « 000 » si rien ne répond.
+
+    On passe par curl et non par urllib : il faut résoudre le nom vers 127.0.0.1
+    tout en conservant le bon en-tête Host et la bonne SNI — sinon on teste le
+    DNS et le réseau au lieu de tester le service.
+    """
+    cmd = ["curl", "-sk", "-o", "/dev/null", "-w", "%{http_code}",
+           "--max-time", str(delai)]
+    if hote:
+        cmd += ["--resolve", f"{hote}:443:127.0.0.1"]
+    cmd.append(url)
+    try:
+        r = subprocess.run(cmd, capture_output=True, timeout=delai + 4)
+        return r.stdout.decode().strip() or "000"
+    except Exception:
+        return "000"
+
+
+def _verdict_http(code: str, racine_nue: bool = False) -> str:
+    """Traduire un code en jugement — c'est là que se joue l'utilité de la page.
+
+    Un 401 ou un 403 signifie « le service répond et demande à s'authentifier » :
+    c'est un SUCCÈS, pas une panne. Et 502/503/504 désignent un mandataire qui
+    n'atteint pas son amont, la panne la plus fréquente ici.
+
+    « racine_nue » distingue les deux sondes, et c'est essentiel :
+
+      - Pour une APPLICATION, on interroge le chemin qu'elle déclare. Un 404 y est
+        une anomalie : l'application dit servir là et ne sert rien.
+      - Pour une PILE Docker, on interroge la racine du port publié. Or une
+        application servie sous un sous-chemin rend 404 à sa racine, et c'est la
+        PREUVE que son mandataire fonctionne. La classer en anomalie ferait
+        exactement ce qu'on cherche à éviter : inquiéter à tort, sur un service
+        auquel l'exploitant accède parfaitement.
+    """
+    if code == "000":
+        return "injoignable"
+    if code in ("502", "503", "504"):
+        return "passerelle"
+    if code.startswith(("2", "3")) or code in ("401", "403"):
+        return "ok"
+    if racine_nue and code == "404":
+        return "ok"          # le mandataire répond ; la pile vit sous un sous-chemin
+    return "anomalie"
+
+
+def cmd_sante_lire(_args) -> None:
+    """La DERNIÈRE mesure, telle qu'elle a été écrite — sans resonder.
+
+    La webapp l'appelle à chaque affichage de la page : c'est instantané, et
+    l'horodatage du fichier dit de quand date la mesure. Séparer la lecture du
+    sondage évite qu'une page consultée par curiosité déclenche trente requêtes.
+    """
+    sortir(_json_si_possible(ETAT_DIR / "sante.json") or {})
+
+
+# SONDER LE POINT D'ENTRÉE QUI PROUVE QUELQUE CHOSE.
+#
+# La racine d'une application ne dit pas toujours si elle vit : nginx sert
+# souvent des fichiers statiques devant elle. Fournisseur d'identité arrêté :
+#     /dex/                                 -> 200   (fichiers servis par nginx)
+#     /dex/.well-known/openid-configuration -> 502   (le vrai point d'entrée)
+# La page Santé déclarerait donc « ok » un fournisseur d'identité mort —
+# c'est-à-dire exactement la panne de la nuit précédente, celle qu'elle existe
+# pour attraper.
+#
+# On ne peut pas deviner le bon chemin pour chaque application : on le nomme là
+# où l'on sait que la racine ment. Ailleurs, la racine reste le meilleur choix.
+CHEMINS_SONDE = {
+    # dex ne répond vraiment que sur sa découverte OIDC.
+    "dex": ".well-known/openid-configuration",
+}
+
+
+def _seconde_chance(applications, piles, par_id,
+                    budget=None, pas=None, sonder=None, dormir=None):
+    """Redemander à ce qui ne répond pas encore. Rend le temps total attendu.
+
+    LA SONDE MESURAIT LE TEMPS DE DÉMARRAGE, PAS LA SANTÉ.
+
+    Elle tourne juste après la restauration des piles. Or certaines
+    applications mettent plusieurs dizaines de secondes à servir, et leur
+    mandataire rend 502 tant qu'il n'a pas d'amont : presque chaque nuit
+    annonce donc « ne répond plus » pour un couple debout deux minutes plus
+    tard. Une alerte qui se trompe régulièrement cesse d'être lue — et le jour
+    où elle aura raison, personne ne la croira.
+
+    On ne redemande QU'À CE QUI A ÉCHOUÉ : le coût n'est payé que dans le cas
+    anormal. Et le temps qu'il a fallu est CONSERVÉ dans « apparu_apres_s » : un
+    service qui met 90 s à répondre n'est pas une panne, mais ce n'est pas rien —
+    taire ce délai remplacerait une fausse alerte par un silence, et il finirait
+    un jour par dépasser la patience de la sonde.
+
+    « sonder » et « dormir » sont injectables pour que les tests exercent CETTE
+    boucle sans attendre trois minutes ni ouvrir une socket.
+    """
+    sonder = sonder or _sonder
+    dormir = dormir or time.sleep
+    if budget is None:
+        budget = int(os.environ.get("PRA_SANTE_PATIENCE_S", "180"))
+    if pas is None:
+        pas = int(os.environ.get("PRA_SANTE_PAS_S", "30"))
+    pas = max(1, pas)
+    attendu = 0
+    while budget >= pas:
+        retard_apps = [e for e in applications if e["verdict"] != "ok"]
+        # « non sondable » n'est pas un retard : il n'y a rien à interroger, et
+        # attendre trois minutes pour cela allongerait chaque nuit pour rien.
+        retard_piles = [p for p in piles
+                        if p["verdict"] not in ("ok", "non sondable")]
+        if not retard_apps and not retard_piles:
+            break
+        dormir(pas)
+        budget -= pas
+        attendu += pas
+        for e in retard_apps:
+            cible = par_id.get(e["id"])
+            if not cible:
+                continue
+            code = sonder(cible[3], hote=cible[4])
+            # LE VERDICT EST RECALCULÉ, pas seulement le code. Reposer le code
+            # sans le verdict laisserait la régression en place et l'alerte
+            # partirait quand même : on aurait attendu pour rien, et le défaut
+            # serait invisible — la famille « échoue exactement comme il réussit ».
+            if _verdict_http(code) == "ok":
+                e["code"], e["verdict"] = code, "ok"
+                e["apparu_apres_s"] = attendu
+        for p in retard_piles:
+            code = sonder(f"http://127.0.0.1:{p['port']}/")
+            if _verdict_http(code, racine_nue=True) == "ok":
+                p["code"], p["verdict"] = code, "ok"
+                p["apparu_apres_s"] = attendu
+    # Le tri d'origine plaçait les échecs en tête : il faut le refaire, sinon la
+    # page garderait les retardataires devant alors qu'ils vont bien.
+    applications.sort(key=lambda x: (x["verdict"] == "ok", x["id"]))
+    return attendu
+
+
+def cmd_sante(_args) -> None:
+    """L'ACCESSIBILITÉ RÉELLE, et non l'état des services.
+
+    L'un ne dit rien de l'autre : un conteneur « running » peut rendre 502
+    pendant des heures, et des conteneurs de migration « exited » sont des
+    succès. Un tableau d'états de services rassure à tort.
+
+    On sonde donc ce qu'un utilisateur ferait : l'URL de chaque application, et le
+    port publié de chaque pile Docker. Les URL viennent de YunoHost — domaine et
+    chemin de chaque application — et non d'une table à maintenir, qui se
+    périmerait en silence à la première application ajoutée.
+    """
+    applications = []
+    try:
+        r = subprocess.run(
+            ["yunohost", "app", "list", "--full", "--output-as", "json"],
+            capture_output=True, timeout=90,
+        )
+        données = json.loads(r.stdout.decode("utf-8", "replace"))
+    except Exception:
+        données = {}
+
+    # EN PARALLÈLE, sinon la page expire avant de répondre. Vingt-neuf adresses
+    # avec six secondes de patience chacune font près de trois minutes en série —
+    # bien au-delà du délai d'un mandataire HTTP. En parallèle, l'ensemble tient
+    # dans le temps de la plus lente.
+    aFaire = []
+    for a in (données.get("apps") or []):
+        ident = a.get("id") or a.get("name")
+        if not ident:
+            continue
+        réglages = a.get("settings") or {}
+        dom = réglages.get("domain") or a.get("domain")
+        chemin = réglages.get("path") or a.get("path") or "/"
+        if not dom:
+            continue                      # application sans URL : rien à sonder
+        if not chemin.endswith("/"):
+            chemin += "/"
+        # DEUX ADRESSES, et non une : celle qu'on MONTRE et celle qu'on SONDE.
+        # Elles ne coïncident que par défaut. Afficher l'adresse de sonde
+        # enverrait l'utilisateur sur un document JSON de découverte au lieu de
+        # son application.
+        url = f"https://{dom}{chemin}"
+        sonde = CHEMINS_SONDE.get(ident, "")
+        aFaire.append((ident, a.get("label") or ident, url, url + sonde, dom))
+
+    with cf.ThreadPoolExecutor(max_workers=12) as pool:
+        codes = list(pool.map(lambda t: _sonder(t[3], hote=t[4]), aFaire))
+    for (ident, nom, url, url_sonde, _dom), code in zip(aFaire, codes):
+        entree = {
+            "id": ident, "nom": nom, "url": url, "code": code,
+            "verdict": _verdict_http(code),
+        }
+        if url_sonde != url:
+            entree["sonde"] = url_sonde   # pour que le verdict soit vérifiable
+        applications.append(entree)
+    applications.sort(key=lambda x: (x["verdict"] == "ok", x["id"]))
+
+    # ── piles Docker : le port publié, pas l'état des conteneurs ─────────────
+    piles = []
+    racine = Path(os.environ.get("PRA_DOCKER_ROOT", "/opt/pra-docker"))
+    if racine.is_dir():
+        for d in sorted(racine.iterdir()):
+            if not d.is_dir() or d.name == ".work":
+                continue
+            port = mandataire = None
+            try:
+                r = subprocess.run(
+                    ["docker", "compose", "ps", "--format",
+                     "{{.Service}} {{.Ports}}"],
+                    cwd=str(d), capture_output=True, timeout=30,
+                )
+                # TOUTE PUBLICATION, PAS SEULEMENT « 127.0.0.1: ».
+                #
+                # Un filtre qui ne reconnaît que les liaisons explicitement
+                # bouclées rate « 0.0.0.0:8077->80/tcp », qui inclut pourtant la
+                # boucle locale : la pile est alors déclarée « non sondable,
+                # réseau host » alors qu'elle publie bien un port et qu'elle est
+                # en panne. Deux erreurs d'un coup : un
+                # diagnostic faux, et une panne masquée.
+                #
+                # La flèche est ce qui distingue une publication d'un port
+                # simplement exposé : « 3000/tcp » n'est joignable que depuis
+                # le réseau du compose, « 0.0.0.0:8077->80/tcp » l'est d'ici.
+                for ligne in r.stdout.decode("utf-8", "replace").splitlines():
+                    for m in re.finditer(r"(?:([\d.]+|\[::\]):)?(\d+)->", ligne):
+                        hote, p = m.group(1), m.group(2)
+                        if hote in (None, "0.0.0.0", "127.0.0.1"):
+                            port, mandataire = p, ligne.split()[0]
+                            break
+                    if port:
+                        break
+            except Exception:
+                pass
+            if not port:
+                # Réseau host ou aucune publication locale : il n'y a rien à
+                # sonder, et le dire vaut mieux que de laisser une ligne vide.
+                # On ne dit pas « réseau host » : ce serait une DÉDUCTION, et
+                # elle est souvent fausse. On dit ce qu'on observe.
+                piles.append({"nom": d.name, "port": None, "mandataire": None,
+                              "code": None, "verdict": "non sondable"})
+                continue
+            code = _sonder(f"http://127.0.0.1:{port}/")
+            piles.append({"nom": d.name, "port": port, "mandataire": mandataire,
+                           "code": code,
+                           # racine_nue : on interroge « / » sur le port publié, or
+                           # une pile peut vivre sous un sous-chemin. Un 404 y est
+                           # un succès du mandataire, pas une panne.
+                           "verdict": _verdict_http(code, racine_nue=True)})
+
+    # ── SECONDE CHANCE POUR CE QUI NE RÉPOND PAS ENCORE ─────────────────────
+    # Réservé à l'appel de la nuit : voir _seconde_chance().
+    if getattr(_args, "patienter", False):
+        _seconde_chance(applications, piles, {t[0]: t for t in aFaire})
+
+    # ── COMPARER À LA MESURE PRÉCÉDENTE ─────────────────────────────────────
+    #
+    # Une RÉGRESSION parle infiniment mieux qu'un état absolu. « 24 applications
+    # joignables » ne dit rien ; « hier 29, ce matin 24, voici lesquelles ont
+    # cessé de répondre » désigne le problème. C'est le seul signal qu'aucun de
+    # nos verdicts ne savait produire.
+    #
+    # On ne compare que dans un sens : ce qui répondait et ne répond plus. Une
+    # application qui se met à répondre est une bonne nouvelle, pas une alerte —
+    # et noyer les régressions dans les améliorations ferait cesser de lire.
+    ancien = _json_si_possible(ETAT_DIR / "sante.json") or {}
+    ok_avant = {a["id"] for a in ancien.get("applications", [])
+                if a.get("verdict") == "ok"}
+    ok_apres = {a["id"] for a in applications if a["verdict"] == "ok"}
+    piles_avant = {p["nom"] for p in ancien.get("piles", [])
+                   if p.get("verdict") == "ok"}
+    piles_apres = {p["nom"] for p in piles if p["verdict"] == "ok"}
+    regressions = sorted(ok_avant - ok_apres) + sorted(piles_avant - piles_apres)
+
+    resultat = {
+        "applications": applications,
+        "piles": piles,
+        "horodatage": time.strftime("%Y-%m-%d %H:%M:%S"),
+        "precedent": ancien.get("horodatage"),
+        "regressions": regressions,
+        # Les compteurs servent au message d'alerte : « 29 → 24 » se lit d'un
+        # coup d'œil, une liste de trente lignes non.
+        "ok_avant": len(ok_avant) + len(piles_avant) if ancien else None,
+        "ok_apres": len(ok_apres) + len(piles_apres),
+    }
+    # ÉCRIT SUR DISQUE, PAS RENVOYÉ POUR STOCKAGE EN SESSION.
+    #
+    # Stocker ce résultat dans la session revient à le mettre dans un COOKIE.
+    # Quelques dizaines d'applications et de piles font déjà près de 4 ko bruts,
+    # et une fois signée puis encodée la charge dépasse les 4096 octets qu'un
+    # navigateur accepte : le cookie est jeté EN SILENCE et la page reste vide —
+    # on appuie sur « sonder maintenant » et il ne vient aucun résultat.
+    #
+    # Le fichier a deux autres avantages : la mesure survit à un rafraîchissement,
+    # et son horodatage reste vrai — on ne peut pas confondre « pas encore sondé »
+    # avec « sondé et tout va bien ».
+    try:
+        ETAT_DIR.mkdir(parents=True, exist_ok=True)
+        tmp = ETAT_DIR / "sante.json.tmp"
+        tmp.write_text(json.dumps(resultat, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(ETAT_DIR / "sante.json")      # remplacement atomique
+    except Exception as exc:
+        echouer(f"résultat non enregistré : {exc}")
+    sortir({"ok": True, "horodatage": resultat["horodatage"],
+            "applications": len(applications), "piles": len(piles),
+            "regressions": regressions,
+            "ok_avant": resultat["ok_avant"], "ok_apres": resultat["ok_apres"]})
+
+
+# ── applications installées ─────────────────────────────────────────────────
+
+
+def cmd_apps(_args) -> None:
+    """Liste les applications YunoHost installées, pour que l'interface propose
+    des cases à cocher plutôt qu'un champ libre.
+
+    Une liste saisie à la main se périme en silence : une application installée
+    après coup n'apparaîtrait jamais dans les exclusions, et une application
+    désinstallée y resterait sans qu'on le sache.
+    """
+    try:
+        r = subprocess.run(
+            ["yunohost", "app", "list", "--output-as", "json"],
+            capture_output=True, timeout=60,
+        )
+        données = json.loads(r.stdout.decode("utf-8", "replace"))
+    except Exception as exc:
+        echouer(f"liste des applications illisible : {exc}")
+    apps = []
+    for a in (données.get("apps") or []):
+        ident = a.get("id") or a.get("name")
+        if ident:
+            apps.append({"id": ident, "nom": a.get("label") or a.get("name") or ident})
+    apps.sort(key=lambda x: x["id"])
+    sortir({"apps": apps})
+
+
+def cmd_cibles(_args) -> None:
+    """Applications et piles Docker sélectionnables pour la restauration.
+
+    La liste vient de l'inventaire de la DERNIÈRE exécution
+    (/var/lib/pra/*-status.json), donc de la veille — c'est assumé : ouvrir une
+    archive de 12 Go pour énumérer son contenu coûterait une minute à chaque
+    affichage de page, pour une information qui bougera de toute façon la nuit
+    suivante. Le décalage est compensé côté scripts, qui écartent avec une trace
+    toute cible absente de l'archive du jour.
+
+    La table de référence, elle, est demandée au script lui-même
+    (« PRA_LISTER=1 ») plutôt que reparsée ici : une seule source de vérité.
+    """
+    table = []
+    binaire = SBIN / "pra_restore_replica.sh"
+    if binaire.exists():
+        try:
+            r = subprocess.run(
+                [str(binaire)], capture_output=True, timeout=60,
+                env={**os.environ, "PRA_LISTER": "1"},
+            )
+            for ligne in r.stdout.decode("utf-8", "replace").splitlines():
+                if "|" in ligne:
+                    ident = ligne.split("|", 1)[0].strip()
+                    if ident:
+                        table.append(ident)
+        except Exception:
+            pass
+
+    etat_yh = _json_si_possible(ETAT_DIR / "status.json") or {}
+    etat_dk = _json_si_possible(ETAT_DIR / "docker-status.json") or {}
+    vues_yh = set((etat_yh.get("applications") or {}))
+    piles = sorted({
+        # docker-status.json distingue « pile » et « pile-db » : on ne propose
+        # que la pile, la base la suivant nécessairement.
+        n.rsplit("-db", 1)[0].rsplit("-demarrage", 1)[0]
+        for n in (etat_dk.get("piles") or {})
+    })
+
+    sortir({
+        "applications": [
+            {"id": a, "vue_hier": a in vues_yh} for a in table
+        ],
+        "piles": [{"id": n} for n in piles],
+        "horodatage_yunohost": etat_yh.get("horodatage"),
+        "horodatage_docker": etat_dk.get("horodatage"),
+    })
+
+
+# ── journal d'audit ─────────────────────────────────────────────────────────
+AUDIT = Path("/var/log/arche-audit.log")
+
+
+# ── dépôt de secours ────────────────────────────────────────────────────────
+#
+# Piloter le dépôt sans y téléverser : l'interface montre ce qu'il contient et
+# déclenche les trois opérations du script — vérifier, compléter, nettoyer. Le
+# dépôt lui-même sert déjà les fichiers, les servir une seconde fois n'apporte
+# rien et coûterait cher en mémoire.
+
+DEPOT = Path(os.environ.get("PRA_DEPOT", "/home/yunohost.app/filebrowser"))
+DEPOT_SCRIPT = SBIN / "pra_depot_isos.sh"
+DEPOT_JOURNAL = Path("/var/log/depot-isos.log")
+MANUELS = Path(os.environ.get("PRA_DOC", "/var/www/arche-manuels"))
+
+# Ce qui compose le dépôt, dans l'ordre où on s'y intéresse.
+DEPOT_PARTIES = (
+    ("Images d'amorçage", "iso", ("*.iso", "*.img.xz")),
+    # Les manuels vivent hors du dépôt, dans /var/www : nginx doit pouvoir les
+    # servir, et il ne peut pas traverser le dépôt privé.
+    ("Documentation hors ligne", "@manuels", ("*.html",)),
+    ("Archives Kiwix", "iso/kiwix", ("*.zim",)),
+    ("Outils", "outils", ("*",)),
+)
+
+
+def _taille(chemin: Path, sauf: tuple[Path, ...] = ()) -> int:
+    """Octets occupés, sans lever si le répertoire disparaît en cours de route.
+
+    « sauf » écarte des sous-arbres : iso/kiwix vit DANS iso/, et sans cette
+    exclusion les archives seraient comptées deux fois — le total afficherait
+    plus que ce que le disque contient, ce qui décrédibilise tout le tableau.
+    """
+    total = 0
+    try:
+        for f in chemin.rglob("*"):
+            try:
+                if not f.is_file() or f.is_symlink():
+                    continue
+                if any(x in f.parents for x in sauf):
+                    continue
+                total += f.stat().st_size
+            except OSError:
+                continue
+    except OSError:
+        pass
+    return total
+
+
+DEPOT_VERROU = Path("/run/arche-depot.lock")
+
+
+def _depot_tourne() -> bool:
+    """Un téléchargement est-il en cours ? On regarde les PROCESSUS, pas un
+    fichier : un verrou oublié après un arrêt brutal mentirait indéfiniment."""
+    try:
+        r = subprocess.run(["pgrep", "-f", "sbin/pra_depot_isos"],
+                           capture_output=True, timeout=10)
+        return r.returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _depot_prendre_verrou(quoi: str):
+    """Interdit deux opérations simultanées sur le dépôt.
+
+    Le contrôle par « pgrep » ne suffit pas : entre le moment où on regarde et
+    celui où on lance, deux requêtes peuvent passer toutes les deux — deux
+    téléchargements écrivant le même fichier, ce qui corrompt l'image sans que
+    rien ne le signale. La création du verrou est donc ATOMIQUE
+    (O_EXCL) : le second à essayer échoue, quelle que soit la vitesse.
+
+    Un verrou dont le processus est mort est retiré : sans cela, un arrêt brutal
+    bloquerait le dépôt jusqu'à une intervention manuelle.
+    """
+    try:
+        contenu = DEPOT_VERROU.read_text(encoding="utf-8").split(None, 1)
+        pid = int(contenu[0])
+        os.kill(pid, 0)                      # le processus vit-il encore ?
+        detenteur = contenu[1].strip() if len(contenu) > 1 else "une opération"
+        echouer(f"{detenteur} est déjà en cours sur le dépôt — attendez qu'elle "
+                "se termine")
+    except (OSError, ValueError, IndexError):
+        # Absent, illisible, ou processus mort : le verrou ne vaut rien.
+        try:
+            DEPOT_VERROU.unlink()
+        except OSError:
+            pass
+
+    try:
+        fd = os.open(str(DEPOT_VERROU), os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
+    except FileExistsError:
+        echouer("une opération vient d'être lancée sur le dépôt")
+    with os.fdopen(fd, "w") as f:
+        f.write(f"{os.getpid()} {quoi}")
+    return DEPOT_VERROU
+
+
+def _depot_rendre_verrou() -> None:
+    try:
+        DEPOT_VERROU.unlink()
+    except OSError:
+        pass
+
+
+def cmd_depot_etat(_args) -> None:
+    kiwix = DEPOT / "iso" / "kiwix"
+    parties = []
+    for libelle, rel, motifs in DEPOT_PARTIES:
+        # « @manuels » désigne le répertoire servi par nginx, hors du dépôt.
+        d = MANUELS if rel == "@manuels" else DEPOT / rel
+        n = 0
+        try:
+            for m in motifs:
+                n += sum(1 for f in d.rglob(m)
+                         if f.is_file() and kiwix not in f.parents)
+        except OSError:
+            pass
+        # Seule la ligne « images » exclut Kiwix : la ligne Kiwix, elle, doit
+        # bien compter son propre contenu.
+        sauf = (kiwix,) if rel == "iso" else ()
+        if rel == "iso/kiwix":
+            n = sum(1 for m in motifs for f in d.rglob(m) if f.is_file()) \
+                if d.exists() else 0
+        parties.append({"libelle": libelle,
+                        "chemin": str(MANUELS) if rel == "@manuels" else rel,
+                        "octets": _taille(d, sauf), "fichiers": n})
+
+    libre = None
+    try:
+        st = os.statvfs(DEPOT)
+        libre = st.f_bavail * st.f_frsize
+    except OSError:
+        pass
+
+    manifeste = DEPOT / "MANIFESTE-DEPOT.txt"
+    quand = None
+    try:
+        quand = datetime.fromtimestamp(manifeste.stat().st_mtime).isoformat(
+            timespec="seconds")
+    except OSError:
+        pass
+
+    # Les dernières lignes utiles du journal : la barre de progression de curl
+    # est écartée, sinon on rendrait des milliers de caractères illisibles.
+    lignes = []
+    try:
+        brut = DEPOT_JOURNAL.read_text(encoding="utf-8", errors="replace")
+        for ligne in brut.replace("\r", "\n").splitlines():
+            l = ligne.strip()
+            if l and "%" not in l and "#" not in l:
+                lignes.append(l)
+    except OSError:
+        pass
+
+    # L'adresse à laquelle les manuels sont réellement servis. Sans elle,
+    # l'interface ne pourrait donner qu'un chemin de fichier, inutilisable dans
+    # un navigateur — et personne ne devinerait le port.
+    manuels_url = None
+    try:
+        if any(MANUELS.rglob("*.html")):
+            r = subprocess.run(["ip", "-4", "-br", "addr"],
+                               capture_output=True, text=True, timeout=10).stdout
+            for ligne in r.splitlines():
+                ch = ligne.split()
+                if len(ch) >= 3 and ch[1] == "UP" and not re.match(
+                        r"^(lo|docker|br-|veth|virbr)", ch[0]):
+                    manuels_url = "http://%s:8080/manuels/" % ch[2].split("/")[0]
+                    break
+    except (OSError, subprocess.SubprocessError):
+        pass
+
+    sortir({
+        "parties": parties,
+        "manuels_url": manuels_url,
+        "total_octets": sum(p["octets"] for p in parties),
+        "libre_octets": libre,
+        "manifeste": quand,
+        "en_cours": _depot_tourne(),
+        "journal": lignes[-12:],
+    })
+
+
+def cmd_depot_verifier(_args) -> None:
+    """Compare au publié sans rien télécharger. Quelques dizaines de secondes :
+    on reste synchrone, l'utilisateur attend le résultat."""
+    if not DEPOT_SCRIPT.exists():
+        echouer(f"{DEPOT_SCRIPT} absent")
+    if _depot_tourne():
+        echouer("une mise à jour est en cours : la vérification rendrait un état "
+                "incohérent, attendez qu'elle se termine")
+    _depot_prendre_verrou("une vérification")
+    try:
+        r = subprocess.run([str(DEPOT_SCRIPT), "--verifier"],
+                           capture_output=True, timeout=600)
+    except subprocess.TimeoutExpired:
+        _depot_rendre_verrou()
+        echouer("la vérification a dépassé dix minutes")
+    finally:
+        _depot_rendre_verrou()
+    texte = r.stdout.decode("utf-8", "replace")
+    a_jour, renouveler, absents = [], [], []
+    for ligne in texte.splitlines():
+        l = ligne.strip()
+        if not l:
+            continue
+        if " à jour (" in l:
+            a_jour.append(l.split(" à jour (")[0].strip())
+        elif "NOUVELLE VERSION" in l:
+            renouveler.append(l.split("NOUVELLE VERSION")[0].strip())
+        elif " absent : " in l:
+            absents.append(l.split(" absent : ")[0].strip())
+    sortir({"ok": True, "a_jour": a_jour, "a_renouveler": renouveler,
+            "absents": absents})
+
+
+def _lancer_hors_cgroup(nom: str, commande: list[str], journal: Path,
+                        env: dict | None = None, ajouter: bool = False) -> int:
+    """Lancer un travail long DANS SON PROPRE CGROUP, hors de celui de la webapp.
+
+    « start_new_session=True » ne suffit pas : setsid change de SESSION, pas de
+    CGROUP. Or arche.service a « KillMode=control-group » — un
+    « systemctl restart arche » envoie donc SIGTERM à tout le cgroup, y compris
+    aux travaux détachés.
+
+    Un déploiement tue alors une mise à jour du dépôt en cours, qui venait de
+    retélécharger plusieurs gigaoctets : le journal s'arrête net à l'heure du
+    « restart ». Rien ne le signale — ni le journal, ni
+    l'interface : le travail avait simplement disparu.
+
+    C'est inacceptable pour ce dispositif : les opérations qui comptent ici durent
+    des heures, et déployer un correctif est un geste anodin qu'on fait sans
+    penser à ce qui tourne. On passe donc par une unité transitoire — systemd la
+    place dans son propre cgroup, et elle survit à tout redémarrage de la webapp.
+
+    Repli sur l'ancien comportement si systemd-run est absent : mieux vaut un
+    travail fragile qu'un travail impossible, mais on le journalise.
+    """
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    # LE JOURNAL EST VIDÉ ICI, PAS PAR SYSTEMD.
+    #
+    # Poser « StandardOutput=truncate: » et « StandardError=append: » sur le MÊME
+    # fichier fait perdre les messages d'erreur : systemd ouvre les deux flux
+    # séparément et la troncature du premier efface ce que le second vient
+    # d'écrire. Résultat : un bilan « 64 réussis, 14 en échec » sans une seule
+    # ligne disant lesquels — un compte rendu inexploitable, c'est-à-dire
+    # exactement le défaut que ce dispositif cherche à éviter.
+    #
+    # On vide donc soi-même avant de lancer, et les deux flux se contentent
+    # d'ajouter. L'ordre des lignes est alors celui de l'écriture.
+    if not ajouter:
+        journal.write_bytes(b"")
+    if shutil.which("systemd-run"):
+        cmd = [
+            "systemd-run", "--quiet", "--collect",
+            f"--unit=arche-{nom}",
+            "--property=Type=simple",
+            f"--property=StandardOutput=append:{journal}",
+            f"--property=StandardError=append:{journal}",
+            "--property=StandardInput=null",
+        ]
+        for cle, val in (env or {}).items():
+            cmd.append(f"--setenv={cle}={val}")
+        cmd.append("--")
+        cmd += commande
+        r = subprocess.run(cmd, capture_output=True, timeout=30)
+        if r.returncode == 0:
+            return 0                     # l'unité vit sa vie, pas de PID à rendre
+        # systemd a refusé : on le dit dans le journal du travail lui-même, sinon
+        # l'utilisateur voit une opération qui n'a jamais commencé sans raison.
+        with open(journal, "ab") as f:
+            f.write(b"systemd-run a refuse de lancer l'unite, repli sur un "
+                    b"processus detache (fragile : un redemarrage de la webapp "
+                    b"l'interrompra)\n")
+            f.write(r.stderr[:500])
+            f.write(b"\n")
+    with open(journal, "ab" if ajouter else "wb") as sortie:
+        proc = subprocess.Popen(
+            commande, stdout=sortie, stderr=subprocess.STDOUT,
+            stdin=subprocess.DEVNULL, start_new_session=True,
+            env={**os.environ, **(env or {})},
+        )
+    return proc.pid
+
+
+def cmd_depot_majour(_args) -> None:
+    """Complète le dépôt. Détaché : plusieurs heures, la requête HTTP expirerait
+    bien avant — et l'utilisateur croirait l'opération perdue."""
+    if not DEPOT_SCRIPT.exists():
+        echouer(f"{DEPOT_SCRIPT} absent")
+    if _depot_tourne():
+        echouer("un téléchargement est déjà en cours")
+    # Le verrou est pris puis RENDU aussitôt : le processus détaché survit à ce
+    # helper, c'est donc « pgrep » qui fait foi ensuite. Le verrou ne sert qu'à
+    # écarter deux clics simultanés, ce que pgrep ne peut pas faire.
+    _depot_prendre_verrou("une mise à jour")
+    pid = _lancer_hors_cgroup("depot", [str(DEPOT_SCRIPT)], DEPOT_JOURNAL)
+    _depot_rendre_verrou()
+    sortir({"ok": True, "pid": pid})
+
+
+def cmd_depot_nettoyer(_args) -> None:
+    if not DEPOT_SCRIPT.exists():
+        echouer(f"{DEPOT_SCRIPT} absent")
+    if _depot_tourne():
+        echouer("un téléchargement est en cours : nettoyer maintenant "
+                "supprimerait des fichiers en cours d'écriture")
+    _depot_prendre_verrou("un nettoyage")
+    try:
+        r = subprocess.run([str(DEPOT_SCRIPT), "--nettoyer"],
+                           capture_output=True, timeout=300)
+    except subprocess.TimeoutExpired:
+        _depot_rendre_verrou()
+        echouer("le nettoyage a dépassé cinq minutes")
+    finally:
+        _depot_rendre_verrou()
+    sortir({"ok": True,
+            "sortie": r.stdout.decode("utf-8", "replace").splitlines()[-10:]})
+
+
+def cmd_tracer(args) -> None:
+    """Consigne une action et son auteur.
+
+    Écrit par le HELPER, donc dans un fichier que le compte de service ne peut
+    pas réécrire : une trace que l'application pourrait effacer ne vaudrait rien
+    le jour où l'on cherche à savoir qui a lancé quoi.
+    """
+    # Ce qu'il faut réellement interdire, c'est la MISE EN FORME du journal :
+    # sauts de ligne (une fausse entrée) et tabulations (le séparateur de
+    # colonnes). Un filtre par liste blanche ASCII, comme dans la v1, supprimait
+    # aussi les accents — « réglages enregistrés » s'y écrivait « rglages
+    # enregistrs ». str.isprintable() écarte tout caractère de contrôle, tabulation
+    # et saut de ligne compris, tout en gardant les lettres accentuées.
+    def _propre(valeur: str, maxi: int, espaces: bool) -> str:
+        gardés = [c for c in (valeur or "") if c.isprintable() and (espaces or not c.isspace())]
+        texte = "".join(gardés)
+        # Une troncature SILENCIEUSE dans un journal d'audit ferait passer une
+        # trace incomplète pour complète : on la signale.
+        return texte[: maxi - 12] + " …(tronqué)" if len(texte) > maxi else texte
+
+    qui = _propre(args.qui, 64, espaces=False) or "?"
+    quoi = _propre(args.quoi, 1024, espaces=True) or "?"
+    AUDIT.parent.mkdir(parents=True, exist_ok=True)
+    with open(AUDIT, "a", encoding="utf-8") as f:
+        f.write(f"{time.strftime('%Y-%m-%d %H:%M:%S')}\t{qui}\t{quoi}\n")
+    os.chmod(AUDIT, 0o640)
+    sortir({"ok": True})
+
+
+# ── configuration ───────────────────────────────────────────────────────────
+
+
+def cmd_conf_lire(_args) -> None:
+    valeurs = conf_lire_fichier(CONF)
+    # Un secret n'est jamais renvoyé à la webapp : elle n'en a pas besoin pour
+    # afficher un formulaire, et il transiterait inutilement.
+    masquees = {
+        c: ("●●●●●●●●" if c in SECRETS and v else v) for c, v in valeurs.items()
+    }
+    sortir({"valeurs": masquees, "secrets_definis": sorted(
+        c for c in SECRETS if valeurs.get(c)
+    )})
+
+
+def cmd_conf_ecrire(_args) -> None:
+    try:
+        charge = json.load(sys.stdin)
+    except json.JSONDecodeError:
+        echouer("charge utile illisible (JSON attendu)")
+    valeurs = charge.get("valeurs")
+    if not isinstance(valeurs, dict):
+        echouer("charge utile invalide : « valeurs » doit être un objet")
+
+    inconnues = set(valeurs) - set(PAR_CLE)
+    if inconnues:
+        echouer(f"réglage(s) inconnu(s) : {', '.join(sorted(inconnues))}")
+
+    anciennes = conf_lire_fichier(CONF)
+
+    # FUSION avec l'existant, et non remplacement. L'interface n'envoie que les
+    # réglages de SON rôle : sans fusion, configurer le rôle « production »
+    # effacerait ceux de l'arche, et réciproquement. Le fichier reste unique et
+    # partagé par les deux volets.
+    fusion = dict(anciennes)
+    fusion.update(valeurs)
+    valeurs = fusion
+
+    # Un secret laissé masqué signifie « ne pas changer » : on relit l'ancienne
+    # valeur plutôt que d'écrire les points de masquage dans le fichier.
+    for cle in SECRETS:
+        if valeurs.get(cle, "").startswith("●"):
+            valeurs[cle] = anciennes.get(cle, "")
+
+    # REVALIDATION COMPLÈTE. La webapp a déjà validé, mais elle tourne sous un
+    # compte non privilégié : si elle est compromise, ce contrôle-ci est le
+    # dernier avant un fichier lu par des scripts root.
+    try:
+        propre = valider(valeurs)
+        # Les lignes hors schéma sont relues du fichier EXISTANT et reconduites :
+        # sans cela, chaque enregistrement effaçait ce que le schéma ignore —
+        # jetons et réglages posés à la main en font les frais le jour où
+        # quelqu'un enregistre le formulaire.
+        contenu = rendre(propre, lire_hors_schema(CONF))
+    except ValeurInvalide as exc:
+        echouer(str(exc))
+
+    CONF.parent.mkdir(parents=True, exist_ok=True)
+    # Écriture atomique : un fichier tronqué serait sourcé tel quel par le
+    # prochain script et produirait une configuration partielle silencieuse.
+    tmp = CONF.with_suffix(".tmp")
+    tmp.write_text(contenu, encoding="utf-8")
+    os.chmod(tmp, 0o600)
+    os.chown(tmp, 0, 0)
+    os.replace(tmp, CONF)
+    sortir({"ok": True, "reglages": len(propre)})
+
+
+# ── journaux ────────────────────────────────────────────────────────────────
+
+
+def cmd_journal(args) -> None:
+    chemin = JOURNAUX.get(args.quoi)
+    if chemin is None:
+        echouer(f"journal inconnu : {args.quoi}")
+    lignes = max(1, min(args.lignes, 2000))
+    if not chemin.exists():
+        sortir({"lignes": [], "fichier": str(chemin), "absent": True})
+    try:
+        contenu = chemin.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError as exc:
+        echouer(f"lecture impossible : {exc}")
+    sortir({"lignes": contenu[-lignes:], "fichier": str(chemin), "absent": False})
+
+
+# ── canaris ─────────────────────────────────────────────────────────────────
+
+
+def cmd_canaris(args) -> None:
+    if args.action not in CANARIS_ACTIONS:
+        echouer(f"action inconnue : {args.action}")
+    binaire = SBIN / "pra_canaries.sh"
+    if not binaire.exists():
+        echouer(f"{binaire} absent")
+    try:
+        r = subprocess.run(
+            [str(binaire), args.action], capture_output=True, timeout=90
+        )
+    except subprocess.TimeoutExpired:
+        echouer("la production n'a pas répondu dans le délai imparti")
+    sortir(
+        {
+            "ok": r.returncode == 0,
+            "sortie": (r.stdout + r.stderr).decode("utf-8", "replace").strip(),
+        }
+    )
+
+
+# ── restauration ────────────────────────────────────────────────────────────
+
+
+def _travail_en_cours(pidfile: Path, unite: str) -> bool:
+    """Le travail tourne-t-il ? Deux façons de le lancer, deux façons de le voir.
+
+    « os.kill(pid, 0) » est le contrôle historique, et il est FAUX depuis qu'on
+    lance par systemd-run : la fonction rend alors 0 — l'unité vit sa vie, il n'y
+    a pas de PID à rendre — et « kill(0, 0) » vise LE GROUPE DE PROCESSUS
+    COURANT, donc réussit toujours. Le tableau de bord affichait « restauration
+    en cours » indéfiniment, et les boutons restent désactivés.
+
+    On interroge donc systemd quand c'est lui qui porte le travail, et on ne
+    retombe sur le PID que pour le repli en processus détaché.
+    """
+    try:
+        r = subprocess.run(["systemctl", "is-active", unite],
+                           capture_output=True, timeout=10)
+        if r.stdout.decode().strip() == "active":
+            return True
+    except Exception:
+        pass
+    try:
+        pid = int(pidfile.read_text().strip())
+    except Exception:
+        return False
+    if pid <= 0:
+        return False                     # 0 = lancé par systemd, déjà vu ci-dessus
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+
+def _restauration_en_cours() -> bool:
+    return _travail_en_cours(PIDFILE, "arche-restauration.service")
+
+
+def cmd_restaurer(args) -> None:
+    if _restauration_en_cours():
+        echouer("une restauration est déjà en cours")
+    binaire = SBIN / "pra_restore_replica.sh"
+    if not binaire.exists():
+        echouer(f"{binaire} absent")
+
+    env = dict(os.environ)
+    if args.valider:
+        env["PRA_DRY_RUN"] = "1"
+    else:
+        env.pop("PRA_DRY_RUN", None)
+
+    # Une validation qui éteindrait la machine n'a pas de sens : on valide
+    # justement pour REGARDER le résultat. Le refus est explicite plutôt que
+    # silencieux — sinon on croirait avoir programmé une extinction.
+    if getattr(args, "halt", False):
+        if args.valider:
+            echouer("l'extinction n'a pas de sens en validation : "
+                    "on valide pour examiner le résultat")
+        env["PRA_HALT_APRES"] = "1"
+    if getattr(args, "sans_controles", False):
+        env["PRA_FORCE_ALL"] = "1"
+    if getattr(args, "sans_transfert", False):
+        env["PRA_SKIP_FETCH"] = "1"
+
+    # ── ARCHIVE DÉSIGNÉE ────────────────────────────────────────────────────
+    #
+    # LE GESTE LE PLUS CRITIQUE DU DISPOSITIF. Le jour d'un rançongiciel,
+    # l'archive la plus récente est justement celle dont on se méfie : il faut
+    # remonter à une nuit antérieure. Jusqu'ici cela n'existait qu'en ligne de
+    # commande, par PRA_ARCHIVE — donc au moment où l'on est le moins disponible
+    # pour retrouver une commande dans une documentation.
+    #
+    # Le nom vient de l'interface, donc d'un compte non privilégié, et sert à
+    # désigner un fichier lu en root. On le revalide ici intégralement, selon le
+    # principe de ce helper : la webapp n'est jamais crue sur parole.
+    #
+    #   1. nommage EXACT AAAAMMJJ-HHMMSS(.tar) — aucun caractère de chemin ne
+    #      peut passer ce filtre, donc ni « .. » ni « / » ;
+    #   2. le fichier doit exister DANS le magasin attendu ;
+    #   3. le chemin résolu doit toujours être dans ce magasin — ceinture et
+    #      bretelles contre un lien symbolique déposé entre-temps.
+    archive = (getattr(args, "archive", "") or "").strip()
+    if archive:
+        if not re.fullmatch(r"\d{8}-\d{6}(\.tar)?", archive):
+            echouer("nom d'archive inattendu (AAAAMMJJ-HHMMSS attendu)")
+        magasin = Path(os.environ.get("PRA_BACKUP_SRC", "/transferts/backups"))
+        chemin = magasin / (archive if archive.endswith(".tar") else f"{archive}.tar")
+        try:
+            reel = chemin.resolve()
+            if reel.parent != magasin.resolve() or not reel.is_file():
+                raise FileNotFoundError
+        except Exception:
+            echouer(f"archive introuvable dans {magasin} : {archive}")
+        env["PRA_ARCHIVE"] = str(reel)
+        # Le jour de l'archive, transmis au volet Docker pour qu'il apparie son
+        # instantané. Sans lui il prendrait le plus récent — et choisir une
+        # archive antérieure pour fuir un chiffrement laisserait les piles Docker
+        # ramener celui du jour.
+        env["PRA_JOUR"] = reel.name[:8]
+        # Et l'heure : elle départage l'instantané périodique d'un instantané
+        # manuel du même jour, dès lors que les noms la portent.
+        env["PRA_HEURE"] = reel.name[9:15]
+
+    # L'INSTANTANÉ DOCKER, DÉSIGNÉ EXPLICITEMENT. Même validation que l'archive :
+    # nommage exact, existence, appartenance au magasin après résolution.
+    # Sert quand on veut dissocier les deux — piles d'avant-hier avec un YunoHost
+    # d'hier, par exemple, si la contamination n'a pas touché les deux au même
+    # moment.
+    snap = (getattr(args, "docker_snapshot", "") or "").strip()
+    if snap:
+        # Deux nommages : « AAAAMMJJ-docker » (historique) et
+        # « AAAAMMJJ-HHMMSS-docker » (l'heure distingue cron et manuel).
+        if not re.fullmatch(r"\d{8}(-\d{6})?-docker(\.tar)?", snap):
+            echouer("nom d'instantané inattendu (AAAAMMJJ[-HHMMSS]-docker attendu)")
+        magasin = Path(os.environ.get("PRA_BACKUP_SRC", "/transferts/backups"))
+        chemin = magasin / (snap if snap.endswith(".tar") else f"{snap}.tar")
+        try:
+            reel = chemin.resolve()
+            if reel.parent != magasin.resolve() or not reel.is_file():
+                raise FileNotFoundError
+        except Exception:
+            echouer(f"instantané Docker introuvable : {snap}")
+        env["PRA_DOCKER_SNAPSHOT"] = reel.name
+        # Le script pose lui-même SKIP_FETCH quand PRA_ARCHIVE est défini — aller
+        # rechercher une archive désignée sur une production peut-être compromise
+        # n'aurait aucun sens. On ne le redit pas ici pour ne pas laisser croire
+        # que c'est notre décision.
+
+    # Le volet Docker est enchaîné PAR DÉFAUT : « Restaurer maintenant » doit
+    # rendre un réplica complet, pas un réplica où les applications YunoHost
+    # sont à jour et où les piles Docker datent de la veille. On peut s'en
+    # passer, mais il faut le demander.
+    # En validation, il n'a pas lieu d'être : rien n'est modifié.
+    if not args.valider and not getattr(args, "sans_docker", False):
+        env["PRA_AVEC_DOCKER"] = "1"
+
+    # Détaché : une restauration réelle dure une dizaine de minutes. La garder
+    # synchrone ferait expirer la requête HTTP et laisserait l'utilisateur sans
+    # savoir si l'opération continue. Le suivi se fait par le journal.
+    # Dans son propre cgroup : une restauration dure une dizaine de minutes et un
+    # déploiement pendant ce temps la tuerait. Voir _lancer_hors_cgroup.
+    journal = JOURNAUX["restauration"]
+    pid = _lancer_hors_cgroup(
+        "restauration", [str(binaire)], journal,
+        env={c: v for c, v in env.items() if c.startswith("PRA_")},
+        ajouter=True,
+    )
+    PIDFILE.write_text(str(pid))
+    sortir(
+        {
+            "ok": True,
+            # « proc.pid » ici référençait une variable qui n'existe QUE dans
+            # la branche de repli de _lancer_hors_cgroup. Avec systemd-run —
+            # le chemin normal — la fonction rend un entier, et la réponse
+            # levait NameError. Le travail, lui, était DÉJÀ LANCÉ : l'interface
+            # affiche « Échec » sur une restauration qui tourne, ce qui est
+            # pire qu'un échec franc.
+            "pid": pid,
+            "mode": "validation" if args.valider else "réelle",
+            "halt": bool(getattr(args, "halt", False)),
+            "sans_controles": bool(getattr(args, "sans_controles", False)),
+            "sans_transfert": bool(getattr(args, "sans_transfert", False)),
+            "avec_docker": bool(env.get("PRA_AVEC_DOCKER")),
+        }
+    )
+
+
+# ── sauvegarde à la demande (rôle production) ───────────────────────────────
+
+
+def cmd_sauvegarder(args) -> None:
+    """Lance la sauvegarde YunoHost EN TÂCHE DE FOND.
+
+    Comme la restauration : l'opération dure longtemps (12 Go), la garder
+    synchrone ferait expirer la requête HTTP et laisserait l'utilisateur sans
+    savoir si elle continue.
+    """
+    binaire = SBIN / "yunohost_backup_daily.sh"
+    if not binaire.exists():
+        # Historiquement installé dans /usr/local/bin sur la production.
+        autre = Path("/usr/local/bin/yunohost_backup_daily.sh")
+        if autre.exists():
+            binaire = autre
+        else:
+            echouer(f"{binaire} absent")
+    if _sauvegarde_en_cours():
+        echouer("une sauvegarde est déjà en cours")
+
+    # L'instantané Docker est enchaîné PAR DÉFAUT. Sans lui, une sauvegarde
+    # lancée à la main ne contient que le volet YunoHost, et l'arche répliquerait
+    # des piles Docker datant de la veille — sans que rien ne le signale.
+    env = dict(os.environ)
+    if getattr(args, "sans_docker", False):
+        env.pop("PRA_AVEC_DOCKER", None)
+    else:
+        env["PRA_AVEC_DOCKER"] = "1"
+
+    # LE journal de la sauvegarde, pas un fichier à part. On écrivait dans
+    # /var/log/pra_backup.log, que rien d'autre ne lisait ni n'écrivait : la
+    # sortie brute de « yunohost backup » y atterrissait seule, tandis que
+    # l'onglet de l'interface — qui pointait aussi vers ce fichier — restait
+    # vide. En redirigeant vers le journal du script, tout est au même endroit :
+    # ses lignes horodatées, et la sortie brute de YunoHost entre elles.
+    journal = JOURNAUX["sauvegarde"]
+    # Dans son propre cgroup, comme la restauration : une sauvegarde de 12 Go dure
+    # une demi-heure, et c'est exactement le genre d'opération qu'un déploiement
+    # tuait sans le dire.
+    pid = _lancer_hors_cgroup(
+        "sauvegarde", [str(binaire)], journal,
+        env={c: v for c, v in env.items() if c.startswith("PRA_")},
+        ajouter=True,
+    )
+    PIDFILE_BACKUP.write_text(str(pid))
+    sortir({"ok": True, "pid": pid,
+            "avec_docker": bool(env.get("PRA_AVEC_DOCKER"))})
+
+
+def _sauvegarde_en_cours() -> bool:
+    return _travail_en_cours(PIDFILE_BACKUP, "arche-sauvegarde.service")
+
+
+# ── alerte d'essai ──────────────────────────────────────────────────────────
+
+
+def cmd_tester_alerte(_args) -> None:
+    binaire = SBIN / "pra_notify.sh"
+    if not binaire.exists():
+        echouer(f"{binaire} absent")
+    r = subprocess.run(
+        [str(binaire), "info", "Essai depuis la webapp Arche",
+         "Si vous lisez ceci, la chaîne d'alerte fonctionne."],
+        capture_output=True, timeout=60,
+    )
+    # pra_notify.sh sort toujours en 0 par conception : le verdict réel est dans
+    # son journal, qu'on relit pour dire la vérité à l'utilisateur.
+    derniere = ""
+    try:
+        lignes = JOURNAUX["alertes"].read_text(errors="replace").splitlines()
+        derniere = lignes[-1] if lignes else ""
+    except OSError:
+        pass
+    sortir({"ok": "transmise" in derniere, "detail": derniere or
+            (r.stdout + r.stderr).decode("utf-8", "replace").strip()})
+
+
+# ── point d'entrée ──────────────────────────────────────────────────────────
+
+
+def main() -> None:
+    p = argparse.ArgumentParser(prog="arche-helper", add_help=True)
+    sp = p.add_subparsers(dest="commande", required=True)
+
+    sp.add_parser("etat").set_defaults(fn=cmd_etat)
+    sp.add_parser("conf-lire").set_defaults(fn=cmd_conf_lire)
+    sp.add_parser("conf-ecrire").set_defaults(fn=cmd_conf_ecrire)
+
+    pj = sp.add_parser("journal")
+    pj.add_argument("quoi", choices=sorted(JOURNAUX))
+    pj.add_argument("lignes", type=int, nargs="?", default=200)
+    pj.set_defaults(fn=cmd_journal)
+
+    pc = sp.add_parser("canaris")
+    pc.add_argument("action", choices=sorted(CANARIS_ACTIONS))
+    pc.set_defaults(fn=cmd_canaris)
+
+    pr = sp.add_parser("restaurer")
+    g = pr.add_mutually_exclusive_group(required=True)
+    g.add_argument("--valider", action="store_true")
+    g.add_argument("--reel", action="store_true")
+    # Options d'une restauration lancée à la main. Ce sont des DRAPEAUX, pas des
+    # valeurs : rien de ce que l'appelant envoie n'entre dans une commande.
+    pr.add_argument("--halt", action="store_true")
+    pr.add_argument("--sans-controles", action="store_true")
+    pr.add_argument("--sans-transfert", action="store_true")
+    pr.add_argument("--sans-docker", action="store_true")
+    # La SEULE valeur acceptée de l'appelant sur cette commande, et elle est
+    # revalidée intégralement dans cmd_restaurer : nommage exact, existence, et
+    # appartenance au magasin après résolution des liens.
+    pr.add_argument("--archive", default="")
+    pr.add_argument("--docker-snapshot", default="")
+    pr.set_defaults(fn=cmd_restaurer)
+
+    p_sante = sp.add_parser("sante")
+    # Réservé à l'appel de la nuit : la page Santé de l'interface doit répondre
+    # tout de suite, attendre trois minutes la ferait expirer.
+    p_sante.add_argument("--patienter", action="store_true",
+                         help="redemander à ce qui ne répond pas encore")
+    p_sante.set_defaults(fn=cmd_sante)
+    sp.add_parser("sante-lire").set_defaults(fn=cmd_sante_lire)
+    sp.add_parser("apps").set_defaults(fn=cmd_apps)
+    sp.add_parser("cibles").set_defaults(fn=cmd_cibles)
+    sp.add_parser("depot-etat").set_defaults(fn=cmd_depot_etat)
+    sp.add_parser("depot-verifier").set_defaults(fn=cmd_depot_verifier)
+    sp.add_parser("depot-majour").set_defaults(fn=cmd_depot_majour)
+    sp.add_parser("depot-nettoyer").set_defaults(fn=cmd_depot_nettoyer)
+
+    pt = sp.add_parser("tracer")
+    pt.add_argument("qui")
+    pt.add_argument("quoi")
+    pt.set_defaults(fn=cmd_tracer)
+
+    ps = sp.add_parser("sauvegarder")
+    ps.add_argument("--sans-docker", action="store_true")
+    ps.set_defaults(fn=cmd_sauvegarder)
+    sp.add_parser("tester-alerte").set_defaults(fn=cmd_tester_alerte)
+
+    args = p.parse_args()
+    if os.geteuid() != 0:
+        echouer("ce helper doit être exécuté en root (via sudo)")
+    args.fn(args)
+
+
+if __name__ == "__main__":
+    main()

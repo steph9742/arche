@@ -1,0 +1,10 @@
+# Unité dont une application a besoin AU DÉMARRAGE, quand son paquet ne le
+# déclare pas lui-même : « application|unité », une par ligne.
+#
+# Le réplica redémarre à chaque cycle ; une application qui perd la course
+# contre sa base ou son cache reste morte jusqu'à une intervention, et c'est
+# souvent celle qu'on vient consulter en crise. Le complément systemd posé à
+# partir de ce fichier lui laisse 10 tentatives sur 5 minutes.
+#
+# monwiki|redis-server.service
+# monapp|postgresql.service

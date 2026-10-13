@@ -1,0 +1,1090 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>YunoBox</title>
+<style>
+/* ==========================================================================
+   Toute l'interface est dimensionnee en rem, avec 1rem = 10px a l'echelle
+   « Bureau ». Changer la taille de police de <html> redimensionne donc
+   l'ensemble — texte, marges, hauteurs de touche et seuils de colonnes.
+   Necessaire pour les petites dalles : un 4,3 pouces en 800x480 fait 213 ppi,
+   soit 2,2 fois la densite d'un ecran de bureau. Un corps de 15 px n'y mesure
+   que 1,8 mm ; il en faut environ 29 px pour atteindre 3,5 mm de corps.
+   ========================================================================== */
+html{font-size:10px;-webkit-text-size-adjust:100%}
+:root{
+  --bg:#0b0e11; --surf:#12171c; --surf2:#171e25;
+  --hair:rgba(255,255,255,.068); --hair2:rgba(255,255,255,.13);
+  --txt:#eef2f6; --dim:#8a97a3; --dim2:#5c6773;
+  --acc:#4fc3b0; --acc-soft:rgba(79,195,176,.12);
+  --ok:#58c98a; --warn:#e0ae55; --bad:#e07070;
+  --pad:2.2rem;
+  --sh:0 1px 0 rgba(255,255,255,.035) inset, 0 1.8rem 4rem -2.6rem rgba(0,0,0,.9);
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+body{margin:0;background:var(--bg);color:var(--txt);padding-bottom:3rem;
+  font:1.5rem/1.55 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased}
+.n{font-variant-numeric:tabular-nums;font-feature-settings:"tnum"}
+:focus-visible{outline:2px solid var(--acc);outline-offset:2px;border-radius:.6rem}
+@media (prefers-reduced-motion:reduce){*{transition:none!important;animation:none!important}}
+
+/* ---------------- barre ---------------- */
+.bar{position:sticky;top:0;z-index:20;background:rgba(11,14,17,.88);
+  backdrop-filter:saturate(140%) blur(1.4rem);border-bottom:1px solid var(--hair)}
+.bar .top{display:flex;align-items:center;gap:1.3rem;min-height:5.8rem;
+  padding:.6rem 2rem}
+.brand{font-size:1.55rem;font-weight:600;letter-spacing:-.02em;white-space:nowrap}
+.brand em{color:var(--acc);font-style:normal}
+.host{color:var(--dim2);font-size:1.3rem;overflow:hidden;text-overflow:ellipsis;
+  white-space:nowrap}
+.bar .right{margin-left:auto;display:flex;align-items:center;gap:1.6rem;flex:none}
+.stat{display:flex;align-items:center;gap:.7rem;font-size:1.35rem;font-weight:550;
+  white-space:nowrap}
+.stat .k{color:var(--dim2);font-weight:400;font-size:1.2rem}
+.dot{width:.7rem;height:.7rem;border-radius:50%;background:var(--dim2);flex:none}
+.dot.ok{background:var(--ok)} .dot.bad{background:var(--bad)}
+.dot.live{animation:pulse 2.6s ease-in-out infinite}
+@keyframes pulse{0%,100%{opacity:.95}50%{opacity:.2}}
+.acts{display:flex;gap:1.2rem;flex-wrap:wrap;align-items:center}
+.champ{font:inherit;font-size:1.35rem;padding:.7rem 1rem;border-radius:.8rem;
+  border:1px solid var(--hair2);background:var(--surf2);color:var(--txt)}
+.champ:focus{outline:2px solid var(--acc);outline-offset:2px}
+.acts .note{color:var(--dim2);font-size:1.15rem;flex:1;min-width:18rem}
+.btn.danger{border-color:var(--bad);color:var(--bad)}
+#scaleBtn{min-height:3.4rem;padding:0 1.1rem;font-size:1.35rem;font-weight:600}
+
+.tabs{display:flex;padding:0 1.4rem;overflow-x:auto;scrollbar-width:none}
+.tabs::-webkit-scrollbar{display:none}
+.tabs button{flex:0 0 auto;min-height:4.6rem;padding:0 2rem;background:none;
+  border:0;border-bottom:.15rem solid transparent;color:var(--dim);
+  font:inherit;font-size:1.4rem;font-weight:550;cursor:pointer;
+  transition:color .18s;white-space:nowrap}
+.tabs button:hover{color:var(--txt)}
+.tabs button[aria-selected=true]{color:var(--txt);border-bottom-color:var(--acc)}
+.tabs button .c{color:var(--dim2);font-weight:400;font-size:1.2rem;
+  margin-left:.6rem}
+
+/* ---------------- structure ---------------- */
+main{padding:2.2rem 2rem;max-width:112rem;margin:0 auto}
+.panel[hidden]{display:none}
+.stack{display:flex;flex-direction:column;gap:1.6rem}
+.cols{display:grid;gap:1.6rem;grid-template-columns:repeat(auto-fit,minmax(31rem,1fr))}
+.card{background:var(--surf);border:1px solid var(--hair);border-radius:1.6rem;
+  padding:2rem var(--pad);box-shadow:var(--sh)}
+.card.mark{border-color:var(--hair2)}
+.card.mark::before{content:"";display:block;width:2.6rem;height:.2rem;
+  background:var(--acc);border-radius:.2rem;margin-bottom:1.4rem}
+h2{margin:0;font-size:1.45rem;font-weight:600;letter-spacing:-.01em}
+h2 .s{display:block;font-size:1.25rem;font-weight:400;color:var(--dim2);
+  letter-spacing:0;margin-top:.3rem}
+.sep{height:1px;background:var(--hair);margin:1.6rem 0}
+.acces{display:flex;gap:1.6rem;align-items:center;flex-wrap:wrap}
+/* FOND BLANC IMPOSÉ, même en thème sombre : un QR inversé n'est pas lu par une
+   bonne partie des téléphones, et celui-ci ne sert qu'un jour de crise. */
+.qr{flex:none;width:15rem;height:15rem;background:#fff;padding:.7rem;
+    border-radius:1rem;display:flex;align-items:center;justify-content:center}
+.qr svg{display:block;width:100%;height:100%}
+.qr:empty{display:none}
+.acces-txt{min-width:0;flex:1 1 16rem}
+.url{font-size:1.7rem;font-weight:650;word-break:break-all;line-height:1.35}
+
+/* ---------------- hero ---------------- */
+.hero{display:flex;align-items:center;gap:2.6rem;flex-wrap:wrap;margin:.4rem 0}
+/* Le chiffre est deja grand : il ne doit pas doubler avec l'echelle comme le
+   texte courant, sinon il devore la hauteur utile d'une petite dalle. */
+.hero .pct{font-size:clamp(3.6rem,9vw,6.2rem);font-weight:200;line-height:.9;
+  letter-spacing:-.05em}
+.hero .pct u{font-size:2.1rem;font-weight:400;color:var(--dim2);
+  text-decoration:none;letter-spacing:0;margin-left:.3rem}
+.hero .meta{display:flex;flex-direction:column;gap:.8rem;min-width:0}
+
+.chip{display:inline-flex;align-items:center;gap:.6rem;align-self:flex-start;
+  padding:.4rem 1.1rem .4rem .8rem;border-radius:10rem;font-size:1.25rem;
+  font-weight:600;white-space:nowrap;border:1px solid var(--hair2);
+  background:var(--surf2);color:var(--dim)}
+.chip i{width:.6rem;height:.6rem;border-radius:50%;background:currentColor;flex:none}
+.c-ok{color:var(--ok)} .c-warn{color:var(--warn)} .c-bad{color:var(--bad)}
+
+.spark{margin-top:1.4rem}
+.spark .lg{display:flex;justify-content:space-between;gap:1rem;font-size:1.15rem;
+  color:var(--dim2);margin-bottom:.5rem}
+
+/* ---------------- listes de mesures ---------------- */
+.dl{display:grid;grid-template-columns:repeat(auto-fit,minmax(20rem,1fr));
+  gap:0 3rem}
+.dl>div{display:flex;flex-wrap:wrap;justify-content:space-between;
+  align-items:baseline;gap:.3rem 1.4rem;padding:1rem 0;
+  border-bottom:1px solid var(--hair)}
+.dl dt{color:var(--dim);font-size:1.35rem;flex:0 1 auto}
+/* break-word et non anywhere : « anywhere » ramene aussi la largeur minimale
+   calculee du bloc a un caractere, le flex ne lui alloue alors plus de place et
+   la valeur s'ecrit verticalement. */
+.dl dd{margin:0;font-weight:600;text-align:right;flex:1 1 auto;min-width:0;
+  overflow-wrap:break-word}
+.dl dd.q{font-weight:400;color:var(--dim)}
+/* Valeur longue — horodatage, message — : on empile pour lui donner toute la
+   largeur plutot que la colonne etroite restant a droite du libelle. */
+.dl>div.tall{flex-direction:column;align-items:stretch;gap:.2rem}
+.dl>div.tall dd{text-align:left;font-weight:550}
+
+/* ---------------- cellules ---------------- */
+.cells{display:grid;grid-template-columns:repeat(4,1fr);gap:1rem}
+.cellbox{text-align:center}
+.cellbox b{display:block;font-size:1.6rem;font-weight:600;letter-spacing:-.02em}
+.cellbox span{display:block;font-size:1.1rem;color:var(--dim2);margin-top:.1rem}
+.cellbox i{display:block;height:.25rem;border-radius:.2rem;background:var(--acc);
+  margin-top:.8rem;opacity:.55;transition:width .5s}
+
+/* ---------------- jauges ---------------- */
+.gauge{height:.5rem;background:rgba(255,255,255,.06);border-radius:.3rem;
+  overflow:hidden}
+.gauge i{display:block;height:100%;background:var(--acc);border-radius:.3rem;
+  transition:width .5s ease}
+.gauge.ok i{background:var(--ok)} .gauge.warn i{background:var(--warn)}
+.gauge.bad i{background:var(--bad)}
+
+/* ---------------- rangees ---------------- */
+.rows{display:flex;flex-direction:column;max-height:56vh;overflow-y:auto;
+  margin:0 calc(-1 * var(--pad))}
+.row{display:flex;align-items:center;gap:1.4rem;padding:1.2rem var(--pad);
+  min-height:5.4rem;border-bottom:1px solid var(--hair);transition:background .15s}
+.row:last-child{border-bottom:0}
+.row:hover{background:rgba(255,255,255,.02)}
+.row.pin{background:var(--acc-soft)}
+.row .grow{flex:1;min-width:0}
+.row .grow b{display:block;font-weight:550;overflow:hidden;
+  text-overflow:ellipsis;white-space:nowrap}
+.row .grow span{display:block;font-size:1.25rem;color:var(--dim2);
+  overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+
+.tags{display:flex;gap:.7rem;flex-wrap:wrap;margin-top:1rem}
+.tag{background:var(--surf2);border:1px solid var(--hair);border-radius:.7rem;
+  padding:.4rem 1rem;font-size:1.25rem;color:var(--dim);
+  font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+
+.sig{display:flex;align-items:flex-end;gap:.25rem;height:1.5rem;flex:none}
+.sig i{width:.3rem;border-radius:.15rem;background:var(--hair2)}
+.sig i:nth-child(1){height:.5rem} .sig i:nth-child(2){height:.85rem}
+.sig i:nth-child(3){height:1.2rem} .sig i:nth-child(4){height:1.5rem}
+.sig i.on{background:var(--acc)}
+
+/* ---------------- boutons ---------------- */
+.btn{font:inherit;font-weight:600;font-size:1.35rem;color:var(--txt);
+  background:var(--surf2);border:1px solid var(--hair2);border-radius:.9rem;
+  padding:.9rem 1.5rem;min-height:4.2rem;cursor:pointer;flex:none;
+  transition:background .15s,border-color .15s}
+.btn:hover{background:rgba(255,255,255,.05);border-color:rgba(255,255,255,.2)}
+.btn.pri{background:var(--acc);border-color:transparent;color:#04241f}
+.btn.pri:hover{background:#5ed2bf}
+.btn[disabled]{opacity:.4;cursor:default}
+.acts{display:flex;gap:1rem;flex-wrap:wrap;align-items:center}
+
+.note{color:var(--dim2);font-size:1.25rem;line-height:1.6;margin-top:1.2rem}
+.note code{font-family:ui-monospace,Menlo,monospace}
+.err{color:#e58a8a;font-size:1.3rem;margin-top:1.2rem;line-height:1.55}
+.empty{color:var(--dim2);font-size:1.3rem;padding:2.2rem 0;text-align:center}
+
+#toast{position:fixed;left:50%;bottom:2.2rem;
+  transform:translateX(-50%) translateY(.8rem);
+  background:var(--surf2);border:1px solid var(--hair2);border-radius:1.2rem;
+  padding:1.2rem 1.8rem;max-width:92vw;opacity:0;pointer-events:none;
+  font-size:1.35rem;transition:opacity .22s,transform .22s;z-index:40;
+  box-shadow:0 2rem 5rem -2rem rgba(0,0,0,.95)}
+#toast.on{opacity:1;transform:translateX(-50%) translateY(0)}
+#gate{max-width:38rem;margin:14vh auto;padding:0 2.2rem;text-align:center}
+#gate .brand{font-size:2.6rem;display:block;margin-bottom:.8rem}
+#gate input{width:100%;font:inherit;font-size:1.6rem;padding:1.3rem;
+  border-radius:1.1rem;border:1px solid var(--hair2);background:var(--surf2);
+  color:var(--txt);margin:1.4rem 0;text-align:center;letter-spacing:.1em}
+
+/* Sous 46rem de large — cas d'une petite dalle a forte echelle — on replie
+   tout en une colonne et on masque le nom d'hote pour degager la barre. */
+/* ATTENTION : une media query en rem se refere toujours a la taille de police
+   initiale (16px), jamais a celle qu'on fixe sur <html>. Elle ne peut donc pas
+   reagir a l'echelle choisie. On passe par une classe posee par applyScale().
+
+   En mode compact — echelles 5 et 4,3 pouces — on degage de la hauteur utile.
+   La barre superieure se resserre, elle ne contient qu'une seule cible tactile.
+   Les onglets gardent en revanche leur hauteur : un doigt fait la meme taille
+   quelle que soit la dalle, c'est au contenu de ceder, pas a la cible. */
+.compact{--pad:1.6rem}
+.compact main{padding:1.4rem 1.2rem}
+.compact .card{border-radius:1.4rem;padding:1.6rem var(--pad)}
+.compact .sep{margin:1.1rem 0}
+.compact .hero{gap:1.6rem;margin:0}
+.compact .cells{grid-template-columns:repeat(2,1fr);gap:1.4rem}
+.compact .dl{grid-template-columns:1fr}
+.compact .host,.compact .stat .k{display:none}
+.compact .bar .top{min-height:4rem;padding:.4rem 1.2rem;gap:1rem}
+.compact .bar .right{gap:1.1rem}
+.compact #scaleBtn{min-height:2.9rem;padding:0 .8rem;font-size:1.2rem}
+.compact .tabs{padding:0 .5rem}
+.compact .tabs button{padding:0 1.3rem}
+.compact h2 .s{display:none}
+.compact .note{margin-top:.9rem}
+
+/* Vrai petit ecran physique : telephone. */
+@media (max-width:600px){
+  .cols{grid-template-columns:1fr}
+  .dl{grid-template-columns:1fr}
+  .host{display:none}
+}
+</style>
+</head>
+<body>
+
+<div id="gate" hidden>
+  <span class="brand">Yuno<em>Box</em></span>
+  <p class="note">Jeton affiché au démarrage du service,
+     ou dans <code>/etc/yunobox/token</code>.</p>
+  <input id="tok" type="password" placeholder="jeton" autocomplete="off"
+         onkeydown="if(event.key==='Enter')saveTok()">
+  <button class="btn pri" style="width:100%" onclick="saveTok()">Entrer</button>
+  <p class="err" id="gateErr"></p>
+</div>
+
+<div id="app" hidden>
+
+<div class="bar">
+  <div class="top">
+    <span class="brand">Yuno<em>Box</em></span>
+    <span class="host" id="host"></span>
+    <div class="right">
+      <span class="stat" id="mdnsStat" title="yunomdns">
+        <i class="dot"></i><span class="k">mdns</span>
+      </span>
+      <span class="stat n" id="cpuStat" title="processeur"></span>
+      <span class="stat n" id="ramStat" title="mémoire vive"></span>
+      <span class="stat n" id="tempStat"></span>
+      <span class="stat n" id="battStat"></span>
+      <button class="btn" id="scaleBtn" onclick="cycleScale()">Aa</button>
+      <i class="dot live ok" id="liveDot" title="rafraîchissement actif"></i>
+    </div>
+  </div>
+  <div class="tabs" role="tablist" id="tabs">
+    <button role="tab" data-tab="batterie" aria-selected="true">Batterie</button>
+    <button role="tab" data-tab="reseau"   aria-selected="false">Réseau</button>
+    <button role="tab" data-tab="services" aria-selected="false">Services<span class="c" id="svcN"></span></button>
+    <button role="tab" data-tab="disques"  aria-selected="false">Disques</button>
+  </div>
+</div>
+
+<main>
+
+  <!-- ============ BATTERIE ============ -->
+  <section class="panel stack" id="p-batterie" role="tabpanel">
+    <div class="card mark">
+      <h2>Page de crise<span class="s">à scanner ou à recopier</span></h2>
+      <div class="sep"></div>
+      <div class="acces">
+        <div class="qr" id="qrCrise"></div>
+        <div class="acces-txt">
+          <div class="url" id="criseUrl">…</div>
+          <div class="note" id="criseNote"></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="hero">
+        <div id="heroIcon"></div>
+        <div class="pct n" id="heroPct">–<u>%</u></div>
+        <div class="meta">
+          <span class="chip" id="heroState"><i></i>…</span>
+          <span class="note" style="margin:0" id="heroPhase"></span>
+        </div>
+      </div>
+      <div class="spark" id="sparkWrap" hidden>
+        <div class="lg"><span id="sparkLbl">Puissance</span><span id="sparkNow"></span></div>
+        <div id="sparkSvg"></div>
+      </div>
+      <div class="sep"></div>
+      <div class="dl" id="batDl"></div>
+      <div class="err" id="batErr"></div>
+    </div>
+
+    <div class="cols">
+      <div class="card">
+        <h2>Cellules<span class="s">équilibrage du pack</span></h2>
+        <div class="sep"></div>
+        <div class="cells" id="cells"></div>
+        <div class="note" id="spread"></div>
+      </div>
+      <div class="card">
+        <h2>Machine<span class="s">processeur, mémoire, température</span></h2>
+        <div class="sep"></div>
+        <div class="dl" id="sysDl"></div>
+        <div class="note" id="sysNote"></div>
+      </div>
+      <div class="card">
+        <h2>Diagnostic<span class="s">liaisons internes et registres</span></h2>
+        <div class="sep"></div>
+        <div class="dl" style="grid-template-columns:1fr" id="diagDl"></div>
+        <div class="note">Sans entrée USB-C, l'IP2368 est endormie et se déclare
+          injoignable. C'est normal, pas une panne.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ RESEAU ============ -->
+  <section class="panel stack" id="p-reseau" role="tabpanel" hidden>
+    <div class="card mark">
+      <h2>yunomdns<span class="s">résolution des noms .local</span></h2>
+      <div class="sep"></div>
+      <div class="acts">
+        <span class="chip" id="mdnsState"><i></i>…</span>
+        <button class="btn pri" id="mdnsBtn" onclick="restartMdns()">Relancer</button>
+      </div>
+      <div class="tags" id="mdnsDomains"></div>
+      <div class="sep"></div>
+      <div class="dl" id="mdnsDl"></div>
+      <div class="note">Après un changement de réseau, yunomdns doit être relancé
+        sinon les noms <code>.local</code> cessent de résoudre. Le hook
+        NetworkManager s'en charge.</div>
+    </div>
+
+    <div class="cols">
+      <div class="card">
+        <h2>Interfaces<span class="s">connexions actives</span></h2>
+        <div class="sep"></div>
+        <div id="netNow"></div>
+      </div>
+      <div class="card">
+        <h2>Réseaux détectés<span class="s">toucher pour se connecter</span></h2>
+        <div class="sep"></div>
+        <div class="acts" style="margin-bottom:.6rem">
+          <button class="btn" id="scanBtn" onclick="scan()">Scanner</button>
+        </div>
+        <div class="rows" id="wifiList"></div>
+        <div class="err" id="wifiErr"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ SERVICES ============ -->
+  <section class="panel stack" id="p-services" role="tabpanel" hidden>
+
+    <!-- Replication et machine. Deux gestes qu'on ne peut pas faire ailleurs
+         quand le nom ne resout pas : suspendre la nuit, et eteindre proprement. -->
+    <div class="card mark">
+      <h2>Réplication et machine<span class="s">verdict de la nuit, suspension, extinction</span></h2>
+      <div class="sep"></div>
+      <div class="dl" id="praEtat"></div>
+      <div class="sep"></div>
+      <div id="praPause"></div>
+      <div class="sep"></div>
+      <div class="acts">
+        <button class="btn" id="btnHalt" onclick="demanderHalt()">Éteindre proprement</button>
+        <span class="note">Ne coupez jamais l'alimentation : le disque est monté
+          en écriture, une coupure sèche corrompt les bases.</span>
+      </div>
+    </div>
+
+    <div class="card">
+      <h2>Services YunoHost<span class="s">yunomdns épinglé en tête</span></h2>
+      <div class="sep"></div>
+      <div class="rows" id="svcList" style="max-height:68vh"></div>
+    </div>
+  </section>
+
+  <!-- ============ DISQUES ============ -->
+  <section class="panel stack" id="p-disques" role="tabpanel" hidden>
+    <div class="card">
+      <h2>Volumes<span class="s">occupation du stockage</span></h2>
+      <div class="sep"></div>
+      <div id="disks"></div>
+    </div>
+    <div class="card">
+      <h2>Températures<span class="s">stockage</span></h2>
+      <div class="sep"></div>
+      <div class="dl" style="grid-template-columns:1fr" id="nvme"></div>
+      <div class="note">Le UPS HAT (E) n'expose aucune température de cellule :
+        seuls le SoC et le NVMe sont lisibles.</div>
+    </div>
+  </section>
+
+</main>
+</div>
+
+<div id="toast"></div>
+
+<script>
+"use strict";
+const $ = i => document.getElementById(i);
+let TOKEN = sessionStorage.getItem("yunobox_token") || "";
+
+// Releve UNE FOIS, avant que le bloc suivant n'efface la chaine de requete
+// pour retirer le jeton de la barre d'adresse. Sans cela, tout parametre lu
+// plus bas — « scale », notamment — aurait deja disparu.
+const PARAMS = new URLSearchParams(location.search);
+
+(function(){
+  const q = PARAMS.get("token");
+  if (q){ TOKEN = q; sessionStorage.setItem("yunobox_token", q);
+          history.replaceState({}, "", location.pathname); }
+})();
+
+/* ---------------- echelle d'affichage ----------------
+   Les valeurs viennent du calcul physique : pour viser 3,5 mm de corps il faut
+   environ 18 px sur du 7 pouces, 25 px sur du 5 pouces et 29 px sur du 4,3
+   pouces, toutes ces dalles etant en 800x480.                              */
+const SCALES = [
+  { px: 10,   nom: "Bureau" },
+  { px: 12,   nom: "Écran 7 pouces" },
+  { px: 16.5, nom: "Écran 5 pouces" },
+  { px: 19,   nom: "Écran 4,3 pouces" },
+];
+let scaleIdx = 0;
+
+function applyScale(i, silent){
+  scaleIdx = ((i % SCALES.length) + SCALES.length) % SCALES.length;
+  const s = SCALES[scaleIdx];
+  document.documentElement.style.fontSize = s.px + "px";
+  // Les media queries en rem ne suivent pas la taille de <html> : c'est cette
+  // classe qui declenche la mise en page compacte des petites dalles.
+  document.documentElement.classList.toggle("compact", s.px >= 15);
+  localStorage.setItem("yunobox_scale", String(scaleIdx));
+  const b = $("scaleBtn");
+  if (b) b.title = "Taille d'affichage : " + s.nom + " — toucher pour changer";
+  if (!silent) toast("Affichage : " + s.nom);
+}
+function cycleScale(){
+  applyScale(scaleIdx + 1);
+  guard(tickEtat)();          // les icones sont dimensionnees en JS
+}
+(function initScale(){
+  // « ?scale=N » impose la taille sans passer par localStorage : c'est ce qui
+  // permettra de pointer un navigateur en kiosque sur la bonne echelle des le
+  // demarrage, et ce qui sert a produire les captures de la documentation.
+  // 0 Bureau, 1 sept pouces, 2 cinq pouces, 3 quatre-trois pouces.
+  const force = PARAMS.get("scale");
+  if (force !== null && force !== "" && !isNaN(+force)) return applyScale(+force, true);
+  const saved = localStorage.getItem("yunobox_scale");
+  if (saved !== null) return applyScale(+saved, true);
+  // Premiere visite : une dalle tactile etroite est probablement un petit ecran.
+  const petit = (navigator.maxTouchPoints || 0) > 0 && window.innerWidth <= 900;
+  applyScale(petit ? 2 : 0, true);
+})();
+
+const U = () => parseFloat(getComputedStyle(document.documentElement).fontSize) || 10;
+
+async function api(path, body){
+  const o = { headers: { "X-Auth-Token": TOKEN } };
+  if (body){ o.method = "POST"; o.headers["Content-Type"] = "application/json";
+             o.body = JSON.stringify(body); }
+  const r = await fetch(path, o);
+  if (r.status === 401){ const e = new Error("jeton refusé"); e.auth = 1; throw e; }
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+
+function saveTok(){
+  const v = $("tok").value.trim();
+  if (!v) return;
+  TOKEN = v; sessionStorage.setItem("yunobox_token", v); boot();
+}
+
+/* ---------------- utilitaires ---------------- */
+let tTimer;
+function toast(m){
+  const t = $("toast"); t.textContent = m; t.classList.add("on");
+  clearTimeout(tTimer); tTimer = setTimeout(() => t.classList.remove("on"), 4200);
+}
+const esc = s => String(s == null ? "" : s).replace(/[&<>"]/g,
+  c => ({ "&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;" }[c]));
+const dur = m => {
+  if (m == null) return "–";
+  const h = Math.floor(m / 60), r = m % 60;
+  return h ? h + " h " + String(r).padStart(2, "0") : r + " min";
+};
+const bytes = n => {
+  if (n == null) return "–";
+  const u = ["o","Ko","Mo","Go","To"]; let i = 0;
+  while (n >= 1024 && i < u.length - 1){ n /= 1024; i++; }
+  return n.toFixed(i > 1 ? 1 : 0) + " " + u[i];
+};
+const lvl = p => p == null ? "dim" : p <= 15 ? "bad" : p <= 35 ? "warn" : "ok";
+const ETATS = { charge:"en charge", decharge:"décharge", repos:"au repos",
+                inconnu:"état inconnu" };
+
+function chip(el, text, kind){
+  el.className = "chip" + (kind ? " c-" + kind : "");
+  el.innerHTML = "<i></i>" + esc(text);
+}
+function dl(el, pairs){
+  el.innerHTML = pairs.map(([k, v, q]) => {
+    // Au-dela d'une vingtaine de caracteres la valeur passe sous son libelle et
+    // occupe toute la largeur : c'est le cas des horodatages et des messages.
+    const s = String(v == null ? "" : v);
+    const tall = (s.length + String(k).length) > 34 ? " class='tall'" : "";
+    return "<div" + tall + "><dt>" + esc(k) + "</dt><dd class='n"
+      + (q ? " q" : "") + "'>" + esc(s) + "</dd></div>";
+  }).join("");
+}
+
+/* ---------------- indicateur de batterie ---------------- */
+function batteryIcon(pct, charging, remUnits){
+  const w = remUnits * U();
+  const p = Math.max(0, Math.min(100, pct == null ? 0 : pct));
+  const col = { ok:"var(--ok)", warn:"var(--warn)", bad:"var(--bad)",
+                dim:"var(--dim2)" }[lvl(pct)];
+  const fw = 88 * p / 100;
+  const bolt = charging
+    ? '<path d="M58 13 L40 32 h9.5 l-4.5 14 L64 27 H54 Z" fill="#fff" '
+      + 'stroke="var(--bg)" stroke-width="4.5" paint-order="stroke"/>' : "";
+  return '<svg viewBox="0 0 112 60" width="' + w.toFixed(1) + '" height="'
+    + (w * 60 / 112).toFixed(1) + '" role="img" style="display:block"'
+    + ' aria-label="batterie ' + p + ' pour cent'
+    + (charging ? ", en charge" : "") + '">'
+    + '<rect x="1.25" y="7.25" width="99.5" height="45.5" rx="13.5" fill="none" '
+    + 'stroke="var(--hair2)" stroke-width="2.5"/>'
+    + '<rect x="102.5" y="21" width="7" height="18" rx="3.5" fill="var(--hair2)"/>'
+    + (fw > 0.5 ? '<rect x="8" y="14" width="' + fw.toFixed(1)
+        + '" height="32" rx="9" fill="' + col
+        + '" style="transition:width .5s ease"/>' : "")
+    + bolt + "</svg>";
+}
+
+function signalBars(pct){
+  const n = pct >= 75 ? 4 : pct >= 50 ? 3 : pct >= 25 ? 2 : pct > 0 ? 1 : 0;
+  let h = '<span class="sig">';
+  for (let i = 1; i <= 4; i++) h += '<i class="' + (i <= n ? "on" : "") + '"></i>';
+  return h + "</span>";
+}
+
+/* ---------------- courbe de puissance, historique client ---------------- */
+const HIST = [];
+function pushHist(w){
+  if (w == null) return;
+  HIST.push(Math.abs(w));
+  if (HIST.length > 60) HIST.shift();
+}
+function sparkline(vals, h){
+  if (vals.length < 3) return "";
+  const w = 300;
+  const lo = Math.min(...vals), hi = Math.max(...vals);
+  // Charge stable : on centre la courbe, sinon une valeur constante ressemble
+  // a un simple filet de separation.
+  const flat = (hi - lo) < Math.max(hi, 1) * 0.02;
+  const span = flat ? 1 : (hi - lo);
+  const yOf = v => flat ? 30 : 56 - (v - lo) / span * 52;
+  const pts = vals.map((v, i) => [i * w / (vals.length - 1), yOf(v)]);
+  const line = pts.map(p => p[0].toFixed(1) + "," + p[1].toFixed(1)).join(" ");
+  const last = pts[pts.length - 1];
+  return '<svg viewBox="0 0 ' + w + ' 60" width="100%" height="' + h.toFixed(0)
+    + '" preserveAspectRatio="none" style="display:block">'
+    + '<defs><linearGradient id="sg" x1="0" y1="0" x2="0" y2="1">'
+    + '<stop offset="0" stop-color="var(--acc)" stop-opacity=".22"/>'
+    + '<stop offset="1" stop-color="var(--acc)" stop-opacity="0"/>'
+    + "</linearGradient></defs>"
+    + '<polygon points="' + line + " " + w + ',60 0,60" fill="url(#sg)"/>'
+    + '<polyline points="' + line + '" fill="none" stroke="var(--acc)" '
+    + 'stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" '
+    + 'opacity=".85" vector-effect="non-scaling-stroke"/>'
+    + '<circle cx="' + last[0].toFixed(1) + '" cy="' + last[1].toFixed(1)
+    + '" r="2.6" fill="var(--acc)"/></svg>';
+}
+
+/* ---------------- machine : processeur, memoire, chaleur ----------------
+
+   Ces trois grandeurs disent, ensemble, si la machine peine. Separement elles
+   induisent en erreur : une charge moyenne de 4 sur un Pi a 4 coeurs est
+   normale, une temperature de 70 degres l'est aussi tant que rien n'est bride,
+   et une memoire « pleine » est le fonctionnement attendu de Linux — le noyau
+   garde en cache tout ce qu'il peut. On affiche donc « disponible », qui est
+   l'estimation du noyau lui-meme, et le bridage a cote de la temperature.      */
+
+function remplirMachine(s){
+  if (!s) return;
+  const m = s.memoire || {};
+
+  /* La barre du haut : deux chiffres qu'on lit sans y penser. */
+  $("cpuStat").innerHTML = s.cpu_pourcent != null
+    ? '<span class="k">CPU</span>' + s.cpu_pourcent + " %" : "";
+  $("ramStat").innerHTML = m.pourcent != null
+    ? '<span class="k">RAM</span>' + m.pourcent + " %" : "";
+
+  /* La charge moyenne se lit RAPPORTEE AU NOMBRE DE COEURS : « 2.10 » ne veut
+     rien dire seul, « 2.10 sur 4 coeurs » se comprend d'un coup d'oeil. */
+  const c = s.charge_moyenne;
+  const charge = c ? c.map(x => x.toFixed(2)).join("  ")
+                     + (s.coeurs ? "   (" + s.coeurs + " cœurs)" : "") : "–";
+
+  const paires = [
+    ["Processeur", s.cpu_pourcent != null ? s.cpu_pourcent + " %" : "–"],
+    ["Fréquence", s.frequence_mhz ? s.frequence_mhz + " MHz" : "–"],
+    ["Charge 1 / 5 / 15 min", charge],
+    ["Température", s.temperature_c != null ? s.temperature_c + " °C" : "–"],
+    ["Mémoire utilisée", m.total_o
+      ? bytes(m.utilisee_o) + " sur " + bytes(m.total_o)
+        + (m.pourcent != null ? "   (" + m.pourcent + " %)" : "") : "–"],
+    ["Mémoire disponible", m.disponible_o != null ? bytes(m.disponible_o) : "–"],
+  ];
+  /* L'espace d'echange n'apparait que s'il existe ET s'il sert : une ligne
+     « 0 o sur 8 Go » a chaque affichage n'apprend rien et occupe la place. */
+  if (m.echange_total_o) {
+    paires.push(["Espace d'échange",
+      bytes(m.echange_utilise_o) + " sur " + bytes(m.echange_total_o)]);
+  }
+  paires.push(["Depuis", s.uptime_s ? dur(s.uptime_s) : "–"]);
+  dl($("sysDl"), paires);
+
+  /* Le bridage : on ne le mentionne que s'il a eu lieu. Une ligne « pas de
+     bridage » a chaque rafraichissement est du bruit ; une ligne qui apparait
+     est un signal. */
+  const b = s.bridage || {};
+  const maintenant = b.sous_tension_maintenant || b.bridage_maintenant;
+  const depuis = b.sous_tension_depuis_boot || b.bridage_depuis_boot;
+  let note = "";
+  if (maintenant) {
+    note = "⚠ En ce moment : "
+      + (b.sous_tension_maintenant ? "tension d'alimentation insuffisante" : "")
+      + (b.sous_tension_maintenant && b.bridage_maintenant ? ", " : "")
+      + (b.bridage_maintenant ? "fréquence bridée" : "")
+      + ". Vérifiez le chargeur — un modèle USB-C PD est nécessaire.";
+  } else if (depuis) {
+    note = "Un bridage ou une sous-tension s'est produit depuis le démarrage, "
+         + "mais pas en ce moment. Si cela revient, c'est l'alimentation.";
+  }
+  $("sysNote").textContent = note;
+}
+
+/* ---------------- batterie et systeme ---------------- */
+async function tickEtat(){
+  const d = await api("/api/etat"), b = d.batterie, s = d.systeme;
+
+  $("host").textContent = s.hote || "";
+  $("tempStat").innerHTML = s.temperature_c != null
+    ? '<span class="k">SoC</span>' + s.temperature_c + " °C" : "";
+  remplirMachine(s);
+  $("liveDot").className = "dot live ok";
+
+  if (!b.ok){
+    $("battStat").innerHTML = batteryIcon(null, false, 3);
+    $("batErr").textContent = b.erreur || "lecture impossible";
+    chip($("heroState"), "indisponible", "bad");
+    return;
+  }
+  $("batErr").textContent = "";
+  const chg = b.etat === "charge";
+
+  $("battStat").innerHTML = batteryIcon(b.pourcent, chg, 3)
+    + "<span>" + (b.pourcent != null ? b.pourcent + "%" : "–") + "</span>";
+  // Meme logique que pour le grand chiffre : l'icone est plafonnee a une part de
+  // la largeur utile, pour ne pas devorer une petite dalle a forte echelle.
+  $("heroIcon").innerHTML = batteryIcon(b.pourcent, chg,
+      Math.min(13, window.innerWidth * 0.17 / U()));
+  $("heroPct").innerHTML = (b.pourcent != null ? b.pourcent : "–") + "<u>%</u>";
+  chip($("heroState"), ETATS[b.etat] || b.etat,
+       chg ? "ok" : b.etat === "decharge" ? "warn" : null);
+  $("heroPhase").textContent = "Phase " + b.phase
+    + (b.charge_rapide ? " · charge rapide PD" : "");
+
+  pushHist(b.puissance_w);
+  if (HIST.length >= 3){
+    $("sparkWrap").hidden = false;
+    $("sparkLbl").textContent = chg ? "Puissance de charge" : "Consommation";
+    $("sparkNow").textContent = Math.abs(b.puissance_w).toFixed(2) + " W · "
+      + (HIST.length * 3 < 60 ? HIST.length * 3 + " s"
+                              : Math.round(HIST.length * 3 / 60) + " min");
+    $("sparkSvg").innerHTML = sparkline(HIST, 3.6 * U());
+  }
+
+  dl($("batDl"), [
+    ["Autonomie", chg ? "plein dans " + dur(b.charge_restante_min)
+                      : dur(b.autonomie_min)],
+    ["Puissance", b.puissance_w != null
+      ? (b.puissance_w > 0 ? "+" : "") + b.puissance_w + " W" : "–"],
+    ["Tension du pack", b.batterie_mv != null
+      ? (b.batterie_mv / 1000).toFixed(2) + " V" : "–"],
+    ["Courant", b.batterie_ma != null ? b.batterie_ma + " mA" : "–"],
+    ["Capacité", (b.capacite_mah != null ? b.capacite_mah + " mAh" : "–")
+      + (b.energie_wh != null ? " · " + b.energie_wh + " Wh" : "")],
+    ["Entrée USB-C", b.vbus_present
+      ? (b.vbus_mv / 1000).toFixed(2) + " V · " + b.vbus_ma + " mA" : "absente",
+      !b.vbus_present],
+  ]);
+
+  const cs = b.cellules_mv || [], kn = cs.filter(x => x);
+  const lo = kn.length ? Math.min(...kn) : 0, hi = kn.length ? Math.max(...kn) : 1;
+  $("cells").innerHTML = cs.map((v, i) => {
+    const rel = (hi > lo && v) ? 22 + 78 * (v - lo) / (hi - lo) : 100;
+    return "<div class='cellbox'><b class='n'>" + (v != null ? v : "–")
+      + "</b><span>cell " + (i + 1) + "</span><i style='width:"
+      + (v ? rel.toFixed(0) : 0) + "%'></i></div>";
+  }).join("");
+  const w = b.ecart_cellules_mv;
+  $("spread").textContent = w == null ? ""
+    : "Écart maximal " + w + " mV — " + (w <= 50 ? "équilibrage sain"
+      : w <= 200 ? "à surveiller" : "une cellule décroche");
+
+  dl($("diagDl"), [
+    ["Jauge BQ4050", b.liaison_bq4050],
+    ["Chargeur IP2368", b.liaison_ip2368],
+    ["Registre 0x02", b.registre_0x02, true],
+    ["Registre 0x03", b.registre_0x03, true],
+  ]);
+}
+
+/* ---------------- yunomdns ---------------- */
+function renderMdns(m){
+  const up = m.etat === "active";
+  $("mdnsStat").querySelector(".dot").className = "dot " + (up ? "ok" : "bad");
+  $("mdnsStat").title = "yunomdns : " + m.etat;
+  chip($("mdnsState"), up ? "actif" : m.etat, up ? "ok" : "bad");
+  $("mdnsDomains").innerHTML = (m.domaines_local || []).length
+    ? m.domaines_local.map(d => '<span class="tag">' + esc(d) + "</span>").join("")
+    : '<span class="note" style="margin:0">aucun domaine .local détecté</span>';
+  dl($("mdnsDl"), [
+    ["Actif depuis", m.actif_depuis || "–", true],
+    ["Au démarrage", m.au_demarrage || "–"],
+    ["Hook réseau", m.hook_installe ? "installé" : "absent"],
+    ["Dernière relance auto", m.dernier_relancement_auto || "jamais", true],
+  ]);
+}
+
+async function restartMdns(){
+  const b = $("mdnsBtn");
+  b.disabled = true; b.textContent = "Relance…";
+  try {
+    const r = await api("/api/mdns/restart", {});
+    toast((r.ok ? "yunomdns relancé" : "échec") + (r.message ? " — " + r.message : ""));
+  } catch (e){ toast("échec : " + e.message); }
+  b.disabled = false; b.textContent = "Relancer";
+  tickMdns(); if (active === "services") tickServices();
+}
+async function tickMdns(){ renderMdns(await api("/api/mdns")); }
+
+/* ---------------- services ---------------- */
+// ---------------------------------------------------------------------------
+//  Replication : verdict, suspension, extinction
+//
+//  La fraicheur est l'information la plus importante de cet ecran : une arche
+//  qui n'a pas replique depuis dix jours ressemble en tout point a une arche a
+//  jour. Elle est donnee en clair, avec son age.
+// ---------------------------------------------------------------------------
+async function tickPra(){
+  const d = await api("/api/pra");
+
+  let verdict = d.verdict || "inconnu", detail = "";
+  if (d.age_heures !== null && d.age_heures !== undefined) {
+    if (d.age_heures > 48) {
+      verdict = "ANCIENNES — " + Math.floor(d.age_heures / 24) + " jours";
+      detail = "la réplication tourne chaque nuit : quelque chose l'en empêche";
+    } else {
+      detail = "il y a " + d.age_heures + " h";
+    }
+  }
+
+  const lignes = [
+    ["Dernières données", verdict],
+    ["Horodatage", d.horodatage || "—"],
+    ["Archive", d.archive || "—"],
+    ["Réveil nocturne", d.minuterie === "enabled" ? "armé"
+                        : (d.minuterie || "—")],
+  ];
+  if (detail) lignes.push(["", detail, true]);
+  dl($("praEtat"), lignes);
+
+  // Suspension. Les durees proposees couvrent les cas reels : une soiree, une
+  // nuit, une journee, un week-end. Au-dela, le serveur refuse — une suspension
+  // sans limite serait un dispositif eteint qui se croit actif.
+  if (d.pause) {
+    $("praPause").innerHTML =
+      "<div class='row pin'><div class='grow'><b>Réplication suspendue</b>"
+      + "<span>jusqu'au " + esc(d.pause) + " · reprise automatique ensuite</span>"
+      + "</div><button class='btn' onclick='leverPause()'>Reprendre</button></div>";
+  } else {
+    // Les quatre durées couvrent les cas reels — une soiree, une nuit, une
+    // journee, un week-end. Le champ libre est la pour le cas qui n'y entre
+    // pas : une intervention planifiee jusqu'a une date precise.
+    $("praPause").innerHTML =
+      "<div class='acts'><span class='note'>Suspendre la réplication et "
+      + "l'extinction, pour travailler sans être interrompu :</span>"
+      + [4, 12, 24, 72].map(h =>
+          "<button class='btn' onclick='poserPause(" + h + ")'>" + h + " h</button>"
+        ).join("")
+      + "</div>"
+      + "<div class='acts' style='margin-top:1.2rem'>"
+      + "<span class='note'>ou jusqu'à une date précise :</span>"
+      + "<input type='datetime-local' id='pauseDate' class='champ'>"
+      + "<button class='btn' onclick='poserPauseDate()'>Suspendre</button>"
+      + "</div>";
+  }
+}
+
+function dateDans(heures){
+  const t = new Date(Date.now() + heures * 3600 * 1000);
+  const p = n => String(n).padStart(2, "0");
+  return t.getFullYear() + "-" + p(t.getMonth() + 1) + "-" + p(t.getDate())
+       + " " + p(t.getHours()) + ":" + p(t.getMinutes());
+}
+
+async function poserPause(heures){
+  const r = await api("/api/pra/pause", { jusqua: dateDans(heures) });
+  toast(r.ok ? "Réplication suspendue jusqu'au " + r.pause
+             : "Refus : " + (r.erreur || "inconnu"));
+  guard(tickPra)();
+}
+
+// Le champ rend « AAAA-MM-JJTHH:MM ». Le serveur accepte cette forme comme
+// celle avec espace, et « date -d » du script nocturne aussi — verifie.
+async function poserPauseDate(){
+  const c = $("pauseDate");
+  if (!c || !c.value) { toast("Choisissez une date"); return; }
+  const r = await api("/api/pra/pause", { jusqua: c.value });
+  toast(r.ok ? "Réplication suspendue jusqu'au " + r.pause
+             : "Refus : " + (r.erreur || "inconnu"));
+  guard(tickPra)();
+}
+
+async function leverPause(){
+  const r = await api("/api/pra/pause", { jusqua: "" });
+  toast(r.ok ? "Réplication reprise" : "Refus : " + (r.erreur || "inconnu"));
+  guard(tickPra)();
+}
+
+// Extinction en deux temps, sans boite de dialogue du navigateur : sur une dalle
+// tactile en kiosque, « confirm() » peut etre supprime par la configuration, et
+// un appui accidentel eteindrait la machine qu'on est venu consulter.
+let haltArme = null;
+async function demanderHalt(){
+  const b = $("btnHalt");
+  if (!haltArme) {
+    b.textContent = "Confirmer l'extinction";
+    b.classList.add("danger");
+    haltArme = setTimeout(() => {
+      b.textContent = "Éteindre proprement";
+      b.classList.remove("danger");
+      haltArme = null;
+    }, 6000);
+    return;
+  }
+  clearTimeout(haltArme); haltArme = null;
+  b.textContent = "Extinction en cours…";
+  b.disabled = true;
+  try {
+    const r = await api("/api/systeme/halt", { confirme: true });
+    toast(r.ok ? "Extinction demandée — attendez l'arrêt du ventilateur"
+               : "Refus : " + (r.erreur || "inconnu"));
+  } catch (e) {
+    // La machine s'eteint : la requete peut ne jamais recevoir de reponse.
+    toast("Extinction demandée — attendez l'arrêt du ventilateur");
+  }
+}
+
+async function tickServices(){
+  const d = await api("/api/services");
+  renderMdns(d.mdns);
+  const list = (d.services || []).slice().sort((a, b) =>
+    (b.nom === "yunomdns") - (a.nom === "yunomdns") || a.nom.localeCompare(b.nom));
+  $("svcN").textContent = list.length || "";
+
+  $("svcList").innerHTML = list.map(s => {
+    const run = /running|active/i.test(s.etat);
+    const pin = s.nom === "yunomdns";
+    const cfg = s.configuration && !/valid/i.test(s.configuration)
+      ? " · configuration " + esc(s.configuration) : "";
+    return "<div class='row" + (pin ? " pin" : "") + "'><div class='grow'><b>"
+      + esc(s.nom) + "</b><span>" + esc(s.etat) + cfg
+      + (s.au_demarrage ? " · " + esc(s.au_demarrage) : "") + "</span></div>"
+      + "<span class='chip " + (run ? "c-ok" : "c-bad") + "'><i></i>"
+      + (run ? "actif" : "arrêté") + "</span>"
+      + "<button class='btn' data-svc='" + esc(s.nom) + "'>Relancer</button></div>";
+  }).join("") || '<div class="empty">aucun service remonté</div>';
+
+  $("svcList").querySelectorAll("button[data-svc]").forEach(btn => {
+    btn.onclick = async () => {
+      const nom = btn.dataset.svc;
+      btn.disabled = true; btn.textContent = "…";
+      try {
+        const r = await api("/api/services/restart", { nom });
+        toast(nom + (r.ok ? " relancé" : " — échec")
+              + (r.message ? " · " + r.message : ""));
+      } catch (e){ toast("échec : " + e.message); }
+      tickServices();
+    };
+  });
+}
+
+/* ---------------- reseau ---------------- */
+function renderWifi(state, sc){
+  if (state && !state.ok){
+    $("netNow").innerHTML = '<div class="err">' + esc(state.erreur) + "</div>";
+  } else {
+    const rows = (state.interfaces || []).map(i =>
+      "<div class='row' style='padding-left:0;padding-right:0'>"
+      + "<div class='grow'><b>" + esc(i.connexion || "non connectée")
+      + "</b><span>" + esc(i.interface) + " · " + esc(i.type) + "</span></div>"
+      + "<span class='chip " + (/connect/i.test(i.etat) ? "c-ok" : "") + "'><i></i>"
+      + esc(i.etat) + "</span></div>").join("");
+    const prof = (state.enregistres || []).length
+      ? "<div class='note'>Profils enregistrés</div><div class='tags'>"
+        + state.enregistres.map(p => '<span class="tag">' + esc(p)
+        + "</span>").join("") + "</div>"
+      : "";
+    $("netNow").innerHTML = (rows || '<div class="empty">aucune interface</div>') + prof;
+  }
+
+  if (!sc) return;
+  if (!sc.ok){ $("wifiErr").textContent = sc.erreur || ""; return; }
+  /* Radio coupee : une liste vide sans cause accuse le bouton, jamais la
+     radio. C'est le cas d'un Raspberry Pi OS frais, ou rfkill bloque le
+     Wi-Fi tant que le pays n'est pas defini. On le dit, avec le remede. */
+  if (state && state.radio === "disabled"){
+    $("wifiErr").textContent = "";
+    $("wifiList").innerHTML = '<div class="empty">La radio Wi-Fi est '
+      + 'désactivée — le scan ne peut rien voir. Sur un système neuf, '
+      + 'définir le pays la débloque :<br><code>sudo raspi-config nonint '
+      + 'do_wifi_country FR && sudo nmcli radio wifi on</code></div>';
+    return;
+  }
+  $("wifiErr").textContent = "";
+  $("wifiList").innerHTML = (sc.reseaux || []).map(n => {
+    const sec = n.securite && n.securite !== "ouvert";
+    return "<div class='row'><div class='grow'><b>" + esc(n.ssid)
+      + (n.actuel ? " · connecté" : "") + "</b><span>" + esc(n.securite)
+      + " · " + esc(n.frequence) + " · " + n.signal + " %</span></div>"
+      + signalBars(n.signal)
+      + "<button class='btn' data-ssid='" + esc(n.ssid) + "' data-sec='"
+      + (sec ? 1 : 0) + "'>" + (n.actuel ? "Reconnecter" : "Connecter")
+      + "</button></div>";
+  }).join("") || '<div class="empty">aucun réseau détecté</div>';
+
+  $("wifiList").querySelectorAll("button[data-ssid]").forEach(btn => {
+    btn.onclick = async () => {
+      const ssid = btn.dataset.ssid;
+      let password = null;
+      if (btn.dataset.sec === "1"){
+        password = prompt("Mot de passe pour « " + ssid + " »");
+        if (password === null) return;
+      }
+      btn.disabled = true; btn.textContent = "…";
+      try {
+        const r = await api("/api/wifi/connect", { ssid, password });
+        toast(r.ok ? "connecté à " + ssid : "échec — " + (r.message || ""));
+        if (r.ok) setTimeout(() => { tickWifi(); tickMdns(); }, 4500);
+      } catch (e){ toast("échec : " + e.message); }
+      btn.disabled = false; btn.textContent = "Connecter";
+    };
+  });
+}
+
+async function tickWifi(){
+  const d = await api("/api/wifi");
+  renderWifi(d.etat, d.scan);
+}
+async function scan(){
+  const b = $("scanBtn");
+  b.disabled = true; b.textContent = "Scan en cours…";
+  try {
+    const s = await api("/api/wifi/scan");
+    renderWifi((await api("/api/wifi")).etat, s);
+  } catch (e){ toast("échec : " + e.message); }
+  b.disabled = false; b.textContent = "Scanner";
+}
+
+/* ---------------- disques ---------------- */
+async function tickDisks(){
+  const d = await api("/api/disques");
+  $("disks").innerHTML = (d.volumes || []).map(v => {
+    const p = v.pourcent || 0;
+    const k = p >= 90 ? "bad" : p >= 75 ? "warn" : "ok";
+    return "<div style='margin-bottom:1.8rem'>"
+      + "<div style='display:flex;justify-content:space-between;align-items:baseline;"
+      + "gap:1.2rem;margin-bottom:.8rem'><b style='font-weight:550'>"
+      + esc(v.montage) + "</b><span class='n' style='color:var(--dim)'>" + p
+      + " % · " + bytes(v.libre_o) + " libres</span></div>"
+      + "<div class='gauge " + k + "'><i style='width:" + p + "%'></i></div>"
+      + "<div class='note' style='margin-top:.7rem'>" + esc(v.peripherique)
+      + " · " + esc(v.type) + " · " + bytes(v.taille_o) + "</div></div>";
+  }).join("") || '<div class="empty">aucun volume</div>';
+
+  const t = d.temperatures_nvme || {}, ks = Object.keys(t);
+  if (ks.length) dl($("nvme"), ks.map(k => [k, t[k] + " °C"]));
+  else $("nvme").innerHTML = '<div class="empty">non exposées par le noyau</div>';
+}
+
+/* ---------------- onglets ---------------- */
+async function tickAcces(){
+  const d = await api("/api/acces");
+  const q = $("qrCrise"), u = $("criseUrl"), n = $("criseNote");
+  if (!d.principale){
+    q.innerHTML = ""; u.textContent = "aucune adresse réseau";
+    n.textContent = "Aucune interface active : il n'y a rien à joindre pour l'instant.";
+    return;
+  }
+  u.textContent = d.principale.url;
+  q.innerHTML = d.qr || "";
+  // L'avertissement va SOUS l'adresse, là où on la recopie — pas dans une
+  // documentation qu'on ne lira pas le jour venu.
+  const notes = ["Cette adresse change dès que l'arche change de réseau : la relire ici, jamais de mémoire."];
+  if (d.qrencode_absent) notes.push("QR indisponible (qrencode absent) : recopier l'adresse.");
+  const autres = d.adresses.filter(a => !a.principale)
+                           .map(a => a.url + " (" + a.interface + ")");
+  if (autres.length) notes.push("Aussi joignable sur " + autres.join(", ") + ".");
+  if (d.url_nom) notes.push("Par le nom, si mDNS répond : " + d.url_nom);
+  n.textContent = notes.join(" ");
+}
+
+const TABS = {
+  batterie: { fns: [tickAcces], every: 60000 },
+  reseau:   { fns: [tickWifi, tickMdns], every: 20000 },
+  services: { fns: [tickPra, tickServices], every: 15000 },
+  disques:  { fns: [tickDisks], every: 60000 },
+};
+let active = "batterie", tabTimer = null;
+
+function guard(fn){
+  return async () => {
+    try { await fn(); }
+    catch (e){
+      if (e.auth){ $("gate").hidden = false; $("app").hidden = true; }
+      else $("liveDot").className = "dot bad";
+    }
+  };
+}
+
+function show(name){
+  active = name;
+  for (const b of $("tabs").children)
+    b.setAttribute("aria-selected", String(b.dataset.tab === name));
+  for (const k of Object.keys(TABS)) $("p-" + k).hidden = (k !== name);
+  if (tabTimer){ clearInterval(tabTimer); tabTimer = null; }
+  const t = TABS[name], run = () => t.fns.forEach(f => guard(f)());
+  run();
+  if (t.every) tabTimer = setInterval(run, t.every);
+}
+
+$("tabs").addEventListener("click", e => {
+  const b = e.target.closest("button[data-tab]");
+  if (b) show(b.dataset.tab);
+});
+
+/* ---------------- demarrage ---------------- */
+async function boot(){
+  try { await api("/api/etat"); }
+  catch (e){
+    if (e.auth){ $("gate").hidden = false; $("app").hidden = true;
+                 $("gateErr").textContent = "Jeton refusé."; return; }
+  }
+  $("gate").hidden = true; $("app").hidden = false;
+  applyScale(scaleIdx, true);
+  const etat = guard(tickEtat);
+  await etat();
+  setInterval(etat, 3000);
+  guard(tickMdns)();
+  // « ?tab=services » choisit l'onglet ouvert au demarrage, comme « ?scale= »
+  // choisit la taille : de quoi pointer un kiosque sur l'ecran voulu sans
+  // intervention. Une valeur inconnue retombe sur la batterie.
+  const tabDemande = PARAMS.get("tab");
+  show(TABS[tabDemande] ? tabDemande : "batterie");
+}
+
+if (TOKEN) boot(); else $("gate").hidden = false;
+</script>
+</body>
+</html>

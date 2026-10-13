@@ -1,0 +1,20 @@
+[Unit]
+Description=Filet de réveil : alarme RTC garantie à l'extinction de l'arche
+Documentation=file:/usr/local/sbin/pra_reveil_filet.sh
+# Le travail se fait à l'ARRÊT, dans ExecStop. DefaultDependencies=no et
+# Before=shutdown.target placent cet arrêt assez tôt dans la séquence pour que
+# /sys et /usr soient encore là — l'ordre d'arrêt est l'inverse de l'ordre de
+# démarrage, d'où le After= sur les systèmes de fichiers et l'heure.
+DefaultDependencies=no
+Before=shutdown.target
+After=local-fs.target time-sync.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/bin/true
+ExecStop=/usr/local/sbin/pra_reveil_filet.sh
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

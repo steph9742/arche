@@ -1,0 +1,16 @@
+[Unit]
+Description=Relance les piles Docker de l'arche après un démarrage
+Documentation=file:/usr/local/sbin/pra_piles_docker.sh
+# Après Docker, évidemment — et après le réseau, sinon les conteneurs qui
+# publient un port échouent à se lier.
+After=docker.service network-online.target
+Wants=docker.service network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/pra_piles_docker.sh
+TimeoutStartSec=600
+
+[Install]
+WantedBy=multi-user.target

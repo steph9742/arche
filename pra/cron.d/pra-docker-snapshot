@@ -1,0 +1,5 @@
+# Instantané des piles Docker de la PRODUCTION, une heure après la sauvegarde
+# YunoHost : l'arche récupère les deux à 02:10.
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+0 1 * * * root /usr/local/sbin/pra_docker_snapshot.sh

@@ -1,0 +1,451 @@
+{% extends "base.html" %}
+{% block title %}État — Arche{% endblock %}
+
+{#
+  Le tableau de bord dit d'abord CE QUI NE VA PAS. Un écran qui affiche « tout
+  va bien » par défaut finit par ne plus être lu — et c'est la nuit où il avait
+  raison de s'inquiéter qu'on ne le regarde pas.
+#}
+
+{% macro pastille(v) %}
+  {%- if v == "succès" %}etat-ok
+  {%- elif v == "partiel" %}etat-attention
+  {%- elif v %}etat-erreur
+  {%- else %}etat-muet{% endif -%}
+{% endmacro %}
+
+{% block content %}
+<div class="ligne-titre">
+  <h1>{% if role == "arche" %}État de l'arche{% else %}État de la sauvegarde{% endif %}</h1>
+  {% if etat.restauration_en_cours %}
+    <span class="etat etat-attention">Restauration en cours</span>
+  {% elif etat.sauvegarde_en_cours %}
+    <span class="etat etat-attention">Sauvegarde en cours</span>
+  {% endif %}
+</div>
+
+{% set alertes = [] %}
+{% if role == "arche" %}
+  {% if etat.services_morts %}{% set _ = alertes.append("Services en échec : " ~ etat.services_morts|join(", ")) %}{% endif %}
+  {% if not etat.canaris_configures %}{% set _ = alertes.append("Aucun canari configuré : la détection de chiffrement est inactive.") %}{% endif %}
+  {% if etat.timer and etat.timer != "active" %}{% set _ = alertes.append("La minuterie pra-nightly n'est pas active (" ~ etat.timer ~ ") : plus aucune réplication automatique.") %}{% endif %}
+  {#
+    « enabled » et « active » sont indépendants, et c'est le second qu'on regarde
+    d'instinct. Un minuteur ACTIF mais DÉSACTIVÉ paraît sain aujourd'hui et ne
+    redémarrera pas après un reboot — l'alerte ci-dessus reste muette. C'est le
+    piège exact d'une séance de maintenance où l'on arrête le minuteur pour
+    travailler : on le relance sans le réactiver, et la réplication meurt à la
+    prochaine coupure de courant.
+  #}
+  {% if etat.timer_enable and etat.timer_enable not in ("enabled", "inconnu") %}{% set _ = alertes.append("La minuterie pra-nightly est " ~ etat.timer_enable ~ " : même active, elle ne redémarrera PAS après un redémarrage de la machine. Corriger : sudo systemctl enable --now pra-nightly.timer") %}{% endif %}
+  {#
+    Deux nuits manquées, ce n'est plus un retard : c'est une réplication qui ne
+    se fait plus. Le verdict de la dernière restauration peut être « succès » et
+    dater de la semaine passée — c'est précisément le cas qu'aucune autre alerte
+    ne couvre.
+  #}
+  {% if age and age.vieux %}{% set _ = alertes.append("Les données de l'arche datent du " ~ age.quand ~ " — soit " ~ (age.heures / 24)|round|int ~ " jours. Deux nuits manquées ou davantage : vérifier la réplication.") %}{% endif %}
+  {% if etat.yunohost and etat.yunohost.verdict not in ("succès", None) %}{% set _ = alertes.append("Dernière restauration YunoHost : " ~ etat.yunohost.verdict ~ ".") %}{% endif %}
+  {% if etat.docker and etat.docker.verdict not in ("succès", None) %}{% set _ = alertes.append("Dernière restauration Docker : " ~ etat.docker.verdict ~ ".") %}{% endif %}
+{% endif %}
+{% if role == "production" and not etat.archives %}{% set _ = alertes.append("Aucune archive : la sauvegarde quotidienne ne produit rien.") %}{% endif %}
+{# L'ÉTAT DE L'ARCHE VU DE LA PRODUCTION. Libellés et couleurs viennent d'un seul
+   endroit : la carte et « À traiter » disent la même chose, et c'est la décision
+   de pra_recu_verifier.sh qu'ils affichent, pas une seconde lecture des reçus. #}
+{% set libelles_arche = {"vivante": "Restaurée", "incomplete": "Incomplète",
+                         "non_faite": "Pas restaurée cette nuit", "silencieuse": "Silencieuse",
+                         "en_echec": "En échec", "jamais_vue": "Aucun reçu",
+                         "recu_illisible": "Reçu illisible"} %}
+{% set classes_arche = {"vivante": "etat-ok", "incomplete": "etat-attention",
+                        "non_faite": "etat-attention", "silencieuse": "etat-erreur",
+                        "en_echec": "etat-erreur", "recu_illisible": "etat-erreur",
+                        "jamais_vue": "etat-muet"} %}
+{% if role == "production" and etat.recu and etat.recu.etat != "vivante" %}{% set _ = alertes.append("Arche : " ~ libelles_arche.get(etat.recu.etat, etat.recu.etat) ~ (" — " ~ etat.recu.motif if etat.recu.motif else "")) %}{% endif %}
+
+{% if alertes %}
+<div class="carte">
+  <h2>À traiter</h2>
+  <div class="messages" style="margin:.7rem 0 0">
+    {% for a in alertes %}<div class="message message-error"><span>{{ a }}</span></div>{% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<div class="tuiles">
+  {% if role == "arche" %}
+  <div class="tuile">
+    <div class="libelle">Volet YunoHost</div>
+    <div class="valeur texte">
+      <span class="etat {{ pastille(etat.yunohost.verdict if etat.yunohost else None) }}">
+        {{ (etat.yunohost.verdict if etat.yunohost else "Jamais exécuté")|capitaliser }}
+      </span>
+    </div>
+    <div class="sous">{{ etat.yunohost.horodatage[:16]|replace("T", " à ") if etat.yunohost and etat.yunohost.horodatage else "—" }}</div>
+  </div>
+
+  <div class="tuile">
+    <div class="libelle">Volet Docker</div>
+    <div class="valeur texte">
+      <span class="etat {{ pastille(etat.docker.verdict if etat.docker else None) }}">
+        {{ (etat.docker.verdict if etat.docker else "Jamais exécuté")|capitaliser }}
+      </span>
+    </div>
+    <div class="sous">{{ etat.docker.horodatage[:16]|replace("T", " à ") if etat.docker and etat.docker.horodatage else "—" }}</div>
+  </div>
+  {% endif %}
+
+  {#
+    L'ÂGE DES DONNÉES, ET NON L'HEURE DE LA RESTAURATION. Une archive
+    « 20260730-022349 » restaurée à 15 h 34 porte l'état de 02 h 23 : treize
+    heures d'écart. En crise, la première question devant l'arche est « ce que je
+    regarde, ça date de quand ? » — et c'est à celle-là qu'on répond ici.
+  #}
+  {% if role == "arche" and age %}
+  <div class="tuile">
+    <div class="libelle">Âge des données</div>
+    <div class="valeur texte">
+      <span class="etat {{ 'etat-attention' if age.vieux else 'etat-ok' }}">
+        {% if age.heures < 1 %}moins d'une heure
+        {% elif age.heures < 48 %}{{ age.heures }} h
+        {% else %}{{ (age.heures / 24)|round|int }} jours{% endif %}
+      </span>
+    </div>
+    <div class="sous">Sauvegardées le {{ age.quand }}</div>
+  </div>
+  {% endif %}
+
+  <div class="tuile">
+    <div class="libelle">Points de reprise</div>
+    <div class="valeur">{{ etat.archives|length if etat.archives else 0 }}</div>
+    <div class="sous">Archives disponibles</div>
+  </div>
+
+  {% if role == "arche" %}
+  <div class="tuile">
+    <div class="libelle">Prochain réveil</div>
+    <div class="valeur texte">{{ etat.prochain_reveil or "Non armé" }}</div>
+    <div class="sous">Minuterie : {{ (etat.timer or "inconnue")|capitaliser }}</div>
+  </div>
+  {% else %}
+  <div class="tuile">
+    <div class="libelle">Dernière archive</div>
+    <div class="valeur texte">{{ etat.archives[0].date if etat.archives else "Aucune" }}</div>
+    <div class="sous">{{ (etat.archives[0].taille / 1073741824)|round(1) ~ " Go" if etat.archives else "—" }}</div>
+  </div>
+  {% endif %}
+</div>
+
+{% if role == "arche" and etat.yunohost and etat.yunohost.applications %}
+<div class="carte">
+  <h2>Applications YunoHost</h2>
+  <div class="defile">
+    <table class="liste">
+      <tr><th>Application</th><th>Résultat</th></tr>
+      {% for nom, resultat in etat.yunohost.applications.items() %}
+        <tr>
+          <td class="mono">{{ nom }}</td>
+          <td><span class="etat {{ 'etat-erreur' if 'CHEC' in resultat else 'etat-ok' }}">{{ resultat|capitaliser }}</span></td>
+        </tr>
+      {% endfor %}
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if role == "arche" and etat.docker and etat.docker.piles %}
+<div class="carte">
+  <h2>Piles Docker</h2>
+  <div class="defile">
+    <table class="liste">
+      <tr><th>Pile</th><th>Résultat</th></tr>
+      {% for nom, resultat in etat.docker.piles.items() %}
+        <tr>
+          <td class="mono">{{ nom }}</td>
+          <td><span class="etat {{ 'etat-erreur' if 'CHEC' in resultat else 'etat-ok' }}">{{ resultat|capitaliser }}</span></td>
+        </tr>
+      {% endfor %}
+    </table>
+  </div>
+</div>
+{% endif %}
+
+{% if role == "production" %}
+<div class="carte">
+  <h2>Arche : dernière restauration</h2>
+  {% if not etat.recu %}
+    <p class="discret" style="margin:0">
+      Le contrôle de l'arche n'a pas encore tourné. Il passe tous les quarts
+      d'heure : l'état apparaîtra au passage suivant.
+    </p>
+  {% else %}
+    <p style="margin:0 0 .6rem">
+      <span class="etat {{ classes_arche.get(etat.recu.etat, 'etat-muet') }}">
+        {{ libelles_arche.get(etat.recu.etat, etat.recu.etat) }}
+      </span>
+    </p>
+    <div class="defile">
+    <table class="liste">
+      <tr><th>Dernière restauration</th>
+          <td>{{ etat.recu.derniere_restauration[:16]|replace("T", " à ") if etat.recu.derniere_restauration else "—" }}</td></tr>
+      <tr><th>Dernier reçu</th>
+          <td>{% if etat.recu.age_heures is not none %}il y a {{ etat.recu.age_heures }} h{% else %}—{% endif %}
+              <span class="discret petit">(alerte au-delà de {{ etat.recu.seuil_heures }} h)</span></td></tr>
+      {% if etat.recu.archive %}
+      <tr><th>Archive restaurée</th><td class="mono">{{ etat.recu.archive }}</td></tr>
+      {% endif %}
+      {% if etat.recu.mode and etat.recu.mode != "?" %}
+      <tr><th>Mode</th><td>{{ etat.recu.mode }}</td></tr>
+      {% endif %}
+      {% if etat.recu.applications_en_echec %}
+      <tr><th>Applications en échec</th><td class="mono">{{ etat.recu.applications_en_echec|join(", ") }}</td></tr>
+      {% endif %}
+      {% if etat.recu.piles_en_echec %}
+      <tr><th>Piles Docker en échec</th><td class="mono">{{ etat.recu.piles_en_echec|join(", ") }}</td></tr>
+      {% endif %}
+      {% if etat.recu.applications_ignorees %}
+      <tr><th>Non restaurées, par choix</th><td class="mono petit">{{ etat.recu.applications_ignorees|join(", ") }}</td></tr>
+      {% endif %}
+    </table>
+    </div>
+    {% if etat.recu.motif %}<p class="aide">{{ etat.recu.motif }}</p>{% endif %}
+  {% endif %}
+  <div class="actions" style="margin-top:1rem">
+    <a class="bouton" href="{{ base }}/journal/recus">Voir le journal des reçus</a>
+  </div>
+  <p class="aide">
+    Ce que l'arche a déposé ici après sa dernière restauration, jugé par le
+    contrôle de la production. La production ne contacte jamais l'arche : elle
+    constate ce qu'elle a reçu — et c'est l'absence de reçu qui alerte.
+  </p>
+</div>
+{% endif %}
+
+<div class="carte">
+  <h2>Archives</h2>
+  {% if etat.archives %}
+  <div class="defile">
+    <table class="liste">
+      <tr><th>Archive</th><th>Date</th><th class="num">Taille</th></tr>
+      {% for a in etat.archives %}
+        <tr>
+          <td class="mono">{{ a.nom }}</td>
+          <td class="petit">{{ a.date }}</td>
+          <td class="num petit">{{ (a.taille / 1073741824)|round(1) }} Go</td>
+        </tr>
+      {% endfor %}
+    </table>
+  </div>
+  {% else %}
+    <p class="discret" style="margin:0">Aucune archive.</p>
+  {% endif %}
+</div>
+
+{% if role == "arche" %}
+<div class="carte">
+  <h2>Restauration</h2>
+  <p class="petit discret">
+    La validation contrôle l'archive de bout en bout — empreinte, domaines
+    d'origine, traces de rançongiciel — <strong>sans rien modifier</strong>.
+    La restauration réelle, elle, <strong>désinstalle les applications avant de
+    les restaurer</strong> : en cas d'échec à mi-parcours, l'arche reste
+    incomplète jusqu'à la nuit suivante.
+  </p>
+  <form method="post" action="{{ base }}/actions/restaurer" id="form-restauration">
+    <input type="hidden" name="{{ csrf_champ }}" value="{{ csrf }}">
+
+    {# autocomplete="off" sur chaque case : sans lui, le navigateur RESTAURE
+       l'état au rechargement. Sur des options qui désactivent une protection,
+       on croirait repartir d'un formulaire vierge alors qu'une case resterait
+       cochée depuis la fois précédente — et l'on sauterait l'instantané Docker
+       sans le savoir. #}
+    <fieldset class="options-restauration">
+      <legend>Options</legend>
+      {# Une case ajoute une action (éteindre), les trois autres en retirent une.
+         Sans cette phrase, il faut lire chaque libellé pour deviner le sens de
+         la coche, ce que personne ne fait sous pression. #}
+      <p class="aide" style="margin:0 0 .4rem">
+        Chaque case décrit <strong>ce qui se passera si vous la cochez</strong>.
+        Toutes décochées : restauration complète, piles comprises, machine
+        laissée allumée.
+      </p>
+
+      {#
+        LE CHOIX DE L'ARCHIVE, ET POURQUOI IL EST EN PREMIER.
+
+        Le jour d'un rançongiciel, l'archive la plus récente est justement celle
+        dont on se méfie : le chiffrement a pu être répliqué la nuit dernière.
+        Remonter à une nuit antérieure est LE geste de crise — et jusqu'ici il
+        n'existait qu'en ligne de commande, par PRA_ARCHIVE, c'est-à-dire au
+        moment où l'on est le moins disponible pour chercher dans une
+        documentation.
+      #}
+      {% if etat.archives %}
+      <label class="champ">
+        <span class="etiquette"><strong>Archive à restaurer</strong></span>
+        <select name="archive" autocomplete="off">
+          <option value="">La plus récente du jour (défaut)</option>
+          {% for a in etat.archives %}
+          <option value="{{ a.nom[:-4] if a.nom.endswith('.tar') else a.nom }}">
+            {{ a.date }} — {{ a.nom }} ({{ (a.taille / 1073741824)|round(1) }} Go)
+          </option>
+          {% endfor %}
+        </select>
+        <em class="aide">
+          En cas de chiffrement, <strong>remontez avant la contamination</strong> :
+          la dernière archive peut porter les données déjà chiffrées. Une archive
+          désignée n'est jamais retéléchargée — aller la rechercher sur une
+          production compromise n'aurait pas de sens.
+        </em>
+      </label>
+      {% endif %}
+
+      {#
+        L'INSTANTANÉ DOCKER SUIT L'ARCHIVE, SAUF SI ON EN DÉCIDE AUTREMENT.
+
+        Par défaut il est apparié au JOUR de l'archive choisie : restaurer le 27
+        prend « 20260727-docker.tar ». Sans cet appariement, choisir une archive
+        antérieure pour fuir un chiffrement laisserait les piles Docker ramener
+        l'instantané du jour — donc la contamination par l'autre moitié du
+        dispositif.
+
+        Le choix explicite sert quand les deux ne coïncident pas : si la
+        contamination n'a pas touché YunoHost et Docker au même moment.
+      #}
+      {% if etat.instantanes %}
+      <label class="champ">
+        <span class="etiquette"><strong>Instantané Docker</strong></span>
+        <select name="instantane" autocomplete="off">
+          <option value="">Apparié au jour de l'archive (défaut)</option>
+          {% for s in etat.instantanes %}
+          <option value="{{ s.nom[:-4] if s.nom.endswith('.tar') else s.nom }}">
+            {{ s.date }} — {{ s.nom }} ({{ (s.taille / 1048576)|round|int }} Mo)
+          </option>
+          {% endfor %}
+        </select>
+        <em class="aide">
+          Laissez le défaut sauf raison précise : il prend l'instantané du même
+          jour que l'archive, et jamais un plus récent — restaurer des piles
+          postérieures à l'archive ramènerait ce qu'on cherche à éviter.
+        </em>
+      </label>
+      {% endif %}
+
+      <label class="case">
+        <input type="checkbox" name="halt" value="1" autocomplete="off">
+        <span>
+          <strong>Éteindre la machine à la fin</strong>
+          <em>Pour lancer une restauration et partir : elle dure une trentaine de
+            minutes, et une machine allumée pour rien est une machine attaquable.
+            L'extinction a lieu quel que soit le résultat — l'alerte part avant.
+            Sans effet en validation.</em>
+        </span>
+      </label>
+
+      <label class="case">
+        <input type="checkbox" name="sans_transfert" value="1" autocomplete="off">
+        <span>
+          <strong>Ne pas retélécharger l'archive</strong>
+          <em>Rejoue la restauration sur l'archive déjà présente : plus rapide, et
+            sans charge pour la production.</em>
+        </span>
+      </label>
+
+      <label class="case">
+        <input type="checkbox" name="sans_docker" value="1" autocomplete="off">
+        <span>
+          <strong>Ne pas restaurer les piles Docker</strong>
+          <em>Par défaut, une restauration réelle enchaîne le volet Docker.
+            Sans lui, le réplica aurait ses applications YunoHost à jour et ses
+            piles datant de la veille, ce qui ne se voit pas.</em>
+        </span>
+      </label>
+
+      <label class="case">
+        <input type="checkbox" name="sans_controles" value="1" autocomplete="off">
+        <span>
+          <strong class="etat-erreur">Ignorer les contrôles de santé</strong>
+          <em>Passe outre le quorum de témoins et les canaris. Ce sont eux qui
+            empêchent de restaurer une archive chiffrée par un rançongiciel : à
+            ne cocher qu'en sachant pourquoi.</em>
+        </span>
+      </label>
+    </fieldset>
+
+    <div class="actions" style="margin-top:1rem">
+      <button class="bouton" type="submit" name="mode" value="valider"
+              {{ "disabled" if etat.restauration_en_cours }}>
+        Valider l'archive
+      </button>
+      <button class="bouton bouton-danger" type="submit" name="mode" value="reel"
+              id="btn-restaurer" {{ "disabled" if etat.restauration_en_cours }}>
+        Restaurer maintenant
+      </button>
+      <a class="bouton" href="{{ base }}/journal/restauration">Voir le journal</a>
+    </div>
+  </form>
+
+  <script>
+  /* La confirmation ne porte que sur la restauration RÉELLE, et elle rappelle
+     les options cochées : on ne doit pas découvrir après coup que la machine
+     allait s'éteindre ou que les contrôles étaient désactivés. */
+  (function () {
+    var f = document.getElementById("form-restauration");
+    var b = document.getElementById("btn-restaurer");
+    if (!f || !b) return;
+    b.addEventListener("click", function (e) {
+      var av = ["Cette opération DÉSINSTALLE les applications avant de les restaurer."];
+      if (f.querySelector("[name=sans_controles]").checked)
+        av.push("Les contrôles de santé seront IGNORÉS.");
+      /* Le navigateur peut avoir restauré une case cochée depuis la fois
+         précédente : la confirmation les énumère TOUTES, sans quoi une option
+         subie passerait inaperçue. C'est le garde-fou de ce bloc, où quatre
+         options ne se ramènent pas à des boutons. */
+      if (f.querySelector("[name=sans_docker]").checked)
+        av.push("Les piles Docker NE seront PAS restaurées.");
+      if (f.querySelector("[name=sans_transfert]").checked)
+        av.push("L'archive ne sera pas retéléchargée : celle déjà présente sera rejouée.");
+      if (f.querySelector("[name=halt]").checked)
+        av.push("La machine s'ÉTEINDRA à la fin.");
+      if (!confirm(av.join("\n\n") + "\n\nConfirmer ?")) e.preventDefault();
+    });
+  })();
+  </script>
+</div>
+{% else %}
+<div class="carte">
+  <h2>Sauvegarde</h2>
+  <p class="petit discret">
+    Lance immédiatement la sauvegarde quotidienne, sans attendre l'heure
+    planifiée. L'opération dure une dizaine de minutes et place Nextcloud en
+    mode maintenance le temps de son propre volet — les utilisateurs le verront.
+  </p>
+  {# DEUX BOUTONS PLUTÔT QU'UNE CASE. Une case à cocher garde un état, que le
+     navigateur restaure au rechargement et au retour arrière — « autocomplete=off »
+     n'y suffit pas sous Firefox. Sur une option qui DÉSACTIVE une protection, une
+     case restée cochée ferait sauter l'instantané Docker en silence.
+     Un bouton ne garde rien : ce qu'on lit est ce qui va se passer. #}
+  <div class="actions" style="margin-top:1rem">
+    <form method="post" action="{{ base }}/actions/sauvegarder">
+      <input type="hidden" name="{{ csrf_champ }}" value="{{ csrf }}">
+      <button class="bouton bouton-primaire" type="submit" {{ "disabled" if etat.sauvegarde_en_cours }}>
+        Sauvegarder maintenant
+      </button>
+    </form>
+    <form method="post" action="{{ base }}/actions/sauvegarder">
+      <input type="hidden" name="{{ csrf_champ }}" value="{{ csrf }}">
+      <input type="hidden" name="sans_docker" value="1">
+      <button class="bouton" type="submit" {{ "disabled" if etat.sauvegarde_en_cours }}>
+        Sans l'instantané Docker
+      </button>
+    </form>
+    <a class="bouton" href="{{ base }}/journal/sauvegarde">Voir le journal</a>
+  </div>
+  <p class="aide">
+    <strong>Sauvegarder maintenant</strong> enchaîne l'instantané des piles
+    Docker. Sans lui, l'arche répliquerait ensuite des piles datant de la veille,
+    sans que rien ne le signale. La planification, elle, garde ses deux tâches
+    séparées — 00:00 et 01:00.
+  </p>
+</div>
+{% endif %}
+{% endblock %}

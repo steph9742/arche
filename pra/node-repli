@@ -1,0 +1,50 @@
+#!/bin/sh
+# ─────────────────────────────────────────────────────────────────────────────
+# /usr/local/bin/node — REPLI, et non l'installation principale de node.
+#
+# POURQUOI CE FICHIER EXISTE
+#
+# Les paquets YunoHost qui tournent sous node écrivent dans leur unité systemd un
+# PATH contenant le chemin EXACT de leur version :
+#     /opt/node_n/n/versions/node/22.20.0/bin
+# Or le gestionnaire « n » installe « la dernière 22.x disponible au moment où il
+# tourne ». La production et l'arche ne provisionnent pas le même jour : la
+# production a 22.20.0, l'arche a récupéré 22.23.2.
+#
+# À la restauration, l'unité systemd vient de la PRODUCTION et porte donc un
+# chemin qui n'existe pas ici. Le lanceur de l'application a pour shebang
+# « #!/usr/bin/env node », env ne trouve rien dans ce PATH, le service sort en 127
+# — et YunoHost REPLIE TOUTE LA RESTAURATION avant qu'aucune réparation
+# d'après-coup ne puisse intervenir : l'application est irrécupérable, cinq
+# tentatives de démarrage et « Nothing was restored ».
+#
+# Un lien fixe ne suffit pas : la version dont l'application a besoin est
+# installée PENDANT la restauration, donc après la création du lien. On résout
+# donc à chaque appel.
+#
+# CE N'EST QU'UN REPLI. Une application dont l'unité porte un PATH juste utilise
+# sa propre version — le PATH la trouve avant /usr/local/bin. Ce fichier ne sert
+# que lorsque cette résolution échoue, c'est-à-dire exactement dans le cas d'une
+# unité venue d'une autre machine.
+#
+# LIMITE ASSUMÉE : on choisit la version la plus récente installée. Si deux
+# applications réclamaient des majeures différentes et que TOUTES DEUX tombaient
+# dans ce repli, la plus ancienne recevrait une version trop neuve. Le cas ne s'est
+# pas présenté, et l'alternative est une restauration impossible. À revoir si le
+# parc se diversifie.
+set -eu
+
+candidat=$(ls -1d /opt/node_n/n/versions/node/*/bin/node 2>/dev/null | sort -V | tail -1)
+
+if [ -n "${candidat:-}" ] && [ -x "$candidat" ]; then
+  exec "$candidat" "$@"
+fi
+
+# Repli du repli : une installation système, si elle existe.
+for n in /usr/bin/nodejs /usr/bin/node; do
+  [ -x "$n" ] && exec "$n" "$@"
+done
+
+echo "node introuvable : aucune version sous /opt/node_n/n/versions/node/" >&2
+echo "  ce lanceur est un repli installé par Arche ; voir /usr/local/bin/node" >&2
+exit 127

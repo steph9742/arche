@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+{% block title %}Santé — Arche{% endblock %}
+
+{#
+  CETTE PAGE SONDE, ELLE NE RÉCITE PAS.
+
+  Le tableau de bord montre l'état des services. Cette page montre ce qu'un
+  utilisateur obtiendrait en tapant l'adresse. Les deux diffèrent, et c'est tout
+  l'intérêt : un conteneur « running » peut rendre 502 pendant des heures. Un
+  écran d'états de services rassure à tort.
+#}
+
+{% macro pastille(v) %}
+  {%- if v == "ok" %}etat-ok
+  {%- elif v == "non sondable" %}etat-muet
+  {%- elif v == "anomalie" %}etat-attention
+  {%- else %}etat-erreur{% endif -%}
+{% endmacro %}
+
+{% block content %}
+<div class="ligne-titre">
+  <h1>Santé réelle</h1>
+  {% if sante %}<span class="discret petit mono">sondé à {{ sante.horodatage[11:] }}</span>{% endif %}
+</div>
+
+<p class="chapo">
+  Ce que répondent vraiment les adresses, et non l'état des services. Un service
+  peut tourner et son adresse ne rien servir — c'est le cas le plus difficile à
+  voir, et celui qui coûte le plus cher en crise.
+</p>
+
+<div class="carte">
+  <form method="post" action="{{ base }}/sante">
+    <input type="hidden" name="{{ csrf_champ }}" value="{{ csrf }}">
+    <button type="submit" class="bouton bouton-primaire">
+      {% if sante %}Sonder à nouveau{% else %}Sonder maintenant{% endif %}
+    </button>
+  </form>
+  <p class="aide">
+    Une dizaine de secondes : chaque adresse est interrogée une par une. La page
+    ne se sonde pas d'elle-même — une page lente est une page qu'on évite, et une
+    page évitée ne sert à rien.
+  </p>
+</div>
+
+{% if not sante %}
+<div class="message message-info">
+  <div>
+    Aucune mesure pour l'instant. Le résultat portera son horodatage : une mesure
+    d'il y a une heure ne dit rien de l'état du moment.
+  </div>
+</div>
+{% else %}
+
+{% set ennuis = sante.applications | rejectattr("verdict", "equalto", "ok") | list %}
+{% set piles_ennuis = sante.piles | rejectattr("verdict", "equalto", "ok")
+                                  | rejectattr("verdict", "equalto", "non sondable") | list %}
+
+{% if ennuis or piles_ennuis %}
+<div class="carte">
+  <h2>À regarder</h2>
+  <div class="sep"></div>
+  <table class="depot">
+    <tr><th>Quoi</th><th>Adresse</th><th class="n">Code</th><th>Diagnostic</th></tr>
+    {% for a in ennuis %}
+    <tr>
+      <td><strong>{{ a.id }}</strong></td>
+      {# Quand la racine ment, le code porte sur un AUTRE chemin : le dire,
+         sinon le lecteur vérifie l'adresse affichée et ne retrouve pas le
+         code. #}
+      <td><span class="q">{{ a.sonde or a.url }}</span></td>
+      <td class="n"><span class="etat {{ pastille(a.verdict) }}">{{ a.code }}</span></td>
+      <td class="petit">
+        {%- if a.verdict == "injoignable" %}rien n'écoute — service arrêté, ou nginx sans bloc <code>server</code> pour ce domaine
+        {%- elif a.verdict == "passerelle" %}le mandataire ne joint pas son amont — souvent une adresse de conteneur périmée
+        {%- else %}répond mais pas comme prévu — chemin ou configuration à vérifier
+        {%- endif -%}
+      </td>
+    </tr>
+    {% endfor %}
+    {% for p in piles_ennuis %}
+    <tr>
+      <td><strong>{{ p.nom }}</strong><span class="q">pile Docker</span></td>
+      <td><span class="q">127.0.0.1:{{ p.port }}</span></td>
+      <td class="n"><span class="etat {{ pastille(p.verdict) }}">{{ p.code }}</span></td>
+      <td class="petit">
+        {%- if p.verdict == "passerelle" and p.mandataire %}relancer le seul mandataire :
+          <code>docker compose -p {{ p.nom }} restart {{ p.mandataire }}</code>
+        {%- elif p.verdict == "injoignable" %}aucun conteneur n'écoute sur ce port
+        {%- else %}code inattendu sur la racine du port
+        {%- endif -%}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+{% else %}
+<div class="message message-ok">
+  <div>
+    <strong>Toutes les adresses répondent.</strong>
+    {{ sante.applications | length }} application(s) et
+    {{ sante.piles | rejectattr("verdict", "equalto", "non sondable") | list | length }} pile(s) sondées.
+  </div>
+</div>
+{% endif %}
+
+<div class="carte">
+  <h2>Applications</h2>
+  <p class="petit">
+    Un <strong>401</strong> ou un <strong>403</strong> est un succès : le service
+    répond et demande à s'authentifier. Une <strong>redirection</strong> aussi —
+    c'est SSOwat ou le portail qui fait son travail.
+  </p>
+  <div class="sep"></div>
+  <table class="depot">
+    <tr><th>Application</th><th>Adresse</th><th class="n">Code</th></tr>
+    {% for a in sante.applications %}
+    <tr>
+      <td>{{ a.nom }}{% if a.nom != a.id %}<span class="q">{{ a.id }}</span>{% endif %}</td>
+      <td><a href="{{ a.url }}" class="petit">{{ a.url }}</a></td>
+      <td class="n"><span class="etat {{ pastille(a.verdict) }}">{{ a.code }}</span></td>
+    </tr>
+    {% endfor %}
+  </table>
+</div>
+
+<div class="carte">
+  <h2>Piles Docker</h2>
+  <p class="petit">
+    On sonde le <strong>port publié</strong>, pas l'état des conteneurs. Un
+    <strong>404</strong> sur la racine n'est pas une panne quand la pile est servie
+    sous un sous-chemin : il prouve au contraire que son mandataire répond.
+  </p>
+  <div class="sep"></div>
+  <table class="depot">
+    <tr><th>Pile</th><th>Mandataire</th><th class="n">Port</th><th class="n">Code</th></tr>
+    {% for p in sante.piles %}
+    <tr>
+      <td>{{ p.nom }}</td>
+      <td class="petit">{{ p.mandataire or "—" }}</td>
+      <td class="n">{{ p.port or "—" }}</td>
+      <td class="n">
+        {% if p.code %}<span class="etat {{ pastille(p.verdict) }}">{{ p.code }}</span>
+        {% else %}<span class="discret petit">aucun port publié</span>{% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </table>
+  <p class="aide">
+    Les piles sans port publié — réseau host, ou pile arrêtée — n'exposent rien sur
+    <code>127.0.0.1</code> : il n'y a rien à sonder, et le dire vaut mieux qu'une
+    ligne vide qu'on interpréterait comme une panne.
+  </p>
+</div>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,175 @@
+{% extends "base.html" %}
+{% block title %}Dépôt de secours — Arche{% endblock %}
+
+{% block content %}
+<h1>Dépôt de secours</h1>
+
+<p class="chapo">
+  Ce qu'il faut avoir sous la main pour reconstruire <strong>sans Internet</strong> :
+  images d'amorçage, outils d'investigation, documentation hors ligne.
+</p>
+
+{% if depot.en_cours %}
+<div class="message message-info">
+  <div>
+    <strong>Un complément est en cours.</strong> Il dure plusieurs heures.
+    Rafraîchissez cette page pour suivre l'avancement — vous pouvez fermer
+    l'onglet, le téléchargement continue.
+  </div>
+</div>
+{% endif %}
+
+<div class="carte">
+  <h2>Ce que contient le dépôt</h2>
+  {# Le lien vers les manuels n'apparaît que s'il y a quelque chose derrière :
+     un lien qui mène à « This location can't be reached » fait douter de tout
+     le reste de la page. #}
+  <p class="petit">
+    Point d'accès : <a href="/depot">le dépôt de fichiers</a>.
+    {% if depot.manuels_url %}
+    Les manuels, eux, sont servis <strong>comme un site</strong> :
+    <a href="{{ depot.manuels_url }}">{{ depot.manuels_url }}</a> — le dépôt de
+    fichiers rend les pages une par une, et les liens entre elles n'y
+    fonctionnent pas.
+    {% endif %}
+  </p>
+  <div class="sep"></div>
+
+  <table class="depot">
+    <tr><th>Contenu</th><th class="n">Fichiers</th><th class="n">Taille</th></tr>
+    {% for p in depot.parties or [] %}
+    <tr>
+      <td>{{ p.libelle }}<span class="q">{{ p.chemin }}</span></td>
+      <td class="n">{{ p.fichiers }}</td>
+      <td class="n">{{ octets(p.octets) }}</td>
+    </tr>
+    {% endfor %}
+    <tr class="total">
+      <td><strong>Total</strong></td>
+      <td class="n"></td>
+      <td class="n"><strong>{{ octets(depot.total_octets) }}</strong></td>
+    </tr>
+  </table>
+
+  {% if depot.libre_octets %}
+  <p class="aide">
+    {{ octets(depot.libre_octets) }} encore disponibles sur le disque.
+    {% if depot.manifeste %}
+    Manifeste écrit le {{ depot.manifeste[:10] }} à {{ depot.manifeste[11:16] }}.
+    {% endif %}
+  </p>
+  {% endif %}
+</div>
+
+<div class="carte">
+  <h2>Entretenir le dépôt</h2>
+  <p class="petit">
+    Les projets publient de nouvelles versions ; un dépôt qui vieillit finit par
+    réinstaller des systèmes vulnérables. À reprendre chaque trimestre, et après
+    toute montée de version majeure de la production.
+  </p>
+  <div class="sep"></div>
+
+  <div class="actions">
+    <form method="post" action="{{ base }}/depot/verifier">
+      <input type="hidden" name="{{ csrf_champ }}" value="{{ csrf }}">
+      <button type="submit" class="bouton">Vérifier</button>
+    </form>
+    <form method="post" action="{{ base }}/depot/majour">
+      <input type="hidden" name="{{ csrf_champ }}" value="{{ csrf }}">
+      <button type="submit" class="bouton bouton-primaire"
+              {% if depot.en_cours %}disabled{% endif %}>
+        Mettre à jour le dépôt
+      </button>
+    </form>
+    <form method="post" action="{{ base }}/depot/nettoyer">
+      <input type="hidden" name="{{ csrf_champ }}" value="{{ csrf }}">
+      <button type="submit" class="bouton"
+              {% if depot.en_cours %}disabled{% endif %}>
+        Retirer les versions périmées
+      </button>
+    </form>
+  </div>
+
+  <p class="aide">
+    <strong>Vérifier</strong> compare aux versions publiées sans rien
+    télécharger — une minute environ.
+  </p>
+  <p class="aide">
+    <strong>Mettre à jour</strong> fait les deux choses à la fois : il récupère
+    ce qui manque <em>et</em> les nouvelles versions de ce qui est déjà là. Il
+    n'y a donc pas de bouton séparé — le script découvre le nom du fichier
+    courant publié par chaque projet, et une nouvelle version porte un nouveau
+    nom. Compter <strong>plusieurs heures</strong>.
+  </p>
+  <p class="aide">
+    <strong>Retirer les versions périmées</strong> supprime les anciennes une
+    fois la nouvelle en place. C'est la seule action destructrice, et elle ne
+    touche jamais la version courante.
+  </p>
+</div>
+
+{% if verif %}
+<div class="carte">
+  <h2>Résultat de la vérification</h2>
+  <div class="sep"></div>
+
+  {% if verif.a_renouveler %}
+  <h3 class="etat-attention">Nouvelle version disponible</h3>
+  <ul class="liste">{% for x in verif.a_renouveler %}<li>{{ x }}</li>{% endfor %}</ul>
+  {% endif %}
+
+  {% if verif.absents %}
+  <h3 class="etat-attention">Absents du dépôt</h3>
+  <ul class="liste">{% for x in verif.absents %}<li>{{ x }}</li>{% endfor %}</ul>
+  {% endif %}
+
+  {% if verif.a_jour %}
+  <h3 class="etat-ok">À jour — {{ verif.a_jour | length }}</h3>
+  <p class="petit">{{ verif.a_jour | join(" · ") }}</p>
+  {% endif %}
+
+  {% if not verif.a_renouveler and not verif.absents %}
+  <p>Tout est à jour.</p>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if depot.journal %}
+<div class="carte">
+  <h2>Dernières opérations</h2>
+  <div class="sep"></div>
+  <pre class="journal depot-journal">{% for l in depot.journal %}{{ l }}
+{% endfor %}</pre>
+</div>
+{% endif %}
+
+<script>
+/* Un double clic sur « Mettre à jour » lançait deux requêtes ; le verrou du
+   helper en écarte une, mais l'utilisateur recevait alors un refus alarmant
+   pour une action qu'il venait lui-même de réussir. On neutralise donc les
+   boutons dès l'envoi, et on dit ce qui se passe.
+   Amélioration progressive : sans script, le verrou serveur reste seul juge. */
+(function () {
+  document.querySelectorAll("form[action*='/depot/']").forEach(function (f) {
+    f.addEventListener("submit", function () {
+      var boutons = document.querySelectorAll("form[action*='/depot/'] button");
+      var envoye = f.querySelector("button");
+      if (envoye) envoye.textContent = "En cours…";
+      boutons.forEach(function (b) { b.disabled = true; });
+    });
+  });
+})();
+</script>
+
+<div class="message message-info">
+  <div>
+    <strong>Ce qui ne peut pas être récupéré automatiquement</strong> — Windows
+    et RHEL exigent une session authentifiée, les guides de l'ANSSI sont derrière
+    une page en JavaScript, Tsurugi passe par une sélection de miroir. Chaque
+    répertoire concerné du dépôt contient un <code>LISEZ-MOI.txt</code> disant
+    quoi prendre et où. Le téléversement se fait par le dépôt de fichiers, pas
+    depuis ici.
+  </div>
+</div>
+{% endblock %}

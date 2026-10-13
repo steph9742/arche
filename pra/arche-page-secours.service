@@ -1,0 +1,12 @@
+[Unit]
+Description=Génère la page de secours de l'arche (adresses, fraîcheur, QR code)
+Documentation=file:/usr/local/share/arche/page-modele.html
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/sbin/pra_page_secours.py
+# Sans privilèges superflus : le script lit deux fichiers et en écrit deux.
+ProtectHome=read-only
+ProtectKernelTunables=yes
+RestrictSUIDSGID=yes

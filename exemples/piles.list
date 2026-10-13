@@ -1,0 +1,15 @@
+# Piles Docker dont on prend un instantané, une par ligne.
+#   nom|compose=…|port=…|config=…|env=…|secrets=…|db=…|donnees=…|arret=…|source=…
+#
+# Seul « compose » est obligatoire. « config », « db » et « donnees » peuvent
+# être répétés. « donnees » accepte « chemin:exclusion ».
+
+# Une application maison : sources expédiées, reconstruites sur le réplica.
+monapp|compose=/opt/monapp/docker-compose.yml|port=8080|config=/opt/monapp/deploy/nginx.conf|env=/opt/monapp/.env|secrets=/opt/monapp/.secrets|db=monapp-postgres-1|source=/opt/monapp
+
+# Une application tierce avec des données montées, dont on exclut le répertoire
+# PostgreSQL déjà vidangé par « db ».
+notes|compose=/srv/notes/docker-compose.yml|port=3010|env=/srv/notes/.env|db=notes_postgres|donnees=/srv/notes/self-host:postgres/pgdata
+
+# Une application en SQLite : on arrête le conteneur le temps de la copie.
+supervision|compose=/docker/supervision/docker-compose.yml|port=3001|donnees=/docker/supervision/data|arret=supervision

@@ -1,0 +1,276 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Arche — page de secours</title>
+<style>
+/* ==========================================================================
+   Page volontairement AUTONOME : aucune ressource externe, aucun script, rien
+   qui dépende du SSO, de dex, de Nextcloud ou d'une base de données. Elle doit
+   s'afficher le jour où tout le reste est à terre — c'est sa seule raison
+   d'être.
+   Elle est GÉNÉRÉE par pra_page_secours.py : les adresses, la fraîcheur des
+   données et le QR code y sont injectés. Ne pas éditer la page produite, elle
+   est réécrite à chaque changement de réseau.
+   Imprimable telle quelle : voir @media print en fin de feuille.
+   ========================================================================== */
+:root{
+  --bg:#0d1013; --surf:#151b21; --hair:rgba(255,255,255,.09);
+  --txt:#eef2f6; --dim:#93a0ad; --acc:#4fc3b0; --warn:#e0ae55; --bad:#e07070;
+  --ok:#58c98a;
+}
+@media (prefers-color-scheme:light){
+  :root{--bg:#f6f7f9; --surf:#fff; --hair:rgba(0,0,0,.1);
+        --txt:#12171c; --dim:#5c6773; --acc:#127f6e; --warn:#8a5d00;
+        --bad:#b03535; --ok:#1d7a45}
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--txt);
+  font:16px/1.6 ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  -webkit-font-smoothing:antialiased}
+.wrap{max-width:54rem;margin:0 auto;padding:2.5rem 1.5rem 5rem}
+header{border-bottom:1px solid var(--hair);padding-bottom:1.5rem;margin-bottom:2rem}
+h1{margin:0 0 .3rem;font-size:1.8rem;letter-spacing:-.02em}
+h1 em{color:var(--acc);font-style:normal}
+.sous{color:var(--dim);font-size:.95rem}
+h2{font-size:1.15rem;margin:2.5rem 0 .8rem;letter-spacing:-.01em}
+h2::before{content:"";display:inline-block;width:1.6rem;height:.15rem;
+  background:var(--acc);vertical-align:.35em;margin-right:.7rem;border-radius:.1rem}
+p{margin:.6rem 0}
+.enc{background:var(--surf);border:1px solid var(--hair);border-radius:.9rem;
+  padding:1.2rem 1.4rem;margin:1rem 0}
+.enc.att{border-color:var(--warn)} .enc.att strong{color:var(--warn)}
+.enc.mal{border-color:var(--bad)}  .enc.mal strong{color:var(--bad)}
+.enc.bien{border-color:var(--ok)}
+ol{padding-left:1.3rem} ol li{margin:.5rem 0}
+ul.non{list-style:none;padding:0;margin:.6rem 0}
+ul.non li{padding:.45rem 0 .45rem 1.9rem;position:relative;
+  border-bottom:1px solid var(--hair)}
+ul.non li:last-child{border-bottom:0}
+ul.non li::before{content:"✕";position:absolute;left:.3rem;color:var(--bad);
+  font-weight:700}
+table{width:100%;border-collapse:collapse;margin:.8rem 0}
+th,td{text-align:left;padding:.6rem .5rem;border-bottom:1px solid var(--hair);
+  vertical-align:top}
+th{color:var(--dim);font-weight:500;font-size:.85rem;text-transform:uppercase;
+  letter-spacing:.04em}
+td a{color:var(--acc);text-decoration:none;font-weight:550}
+td a:hover{text-decoration:underline}
+td .q{color:var(--dim);font-size:.9rem;display:block;margin-top:.15rem}
+code{background:var(--surf);border:1px solid var(--hair);border-radius:.35rem;
+  padding:.1rem .4rem;font-size:.9em;overflow-wrap:break-word}
+pre{background:var(--surf);border:1px solid var(--hair);border-radius:.6rem;
+  padding:.9rem 1.1rem;overflow-x:auto;font-size:.9rem;margin:.7rem 0}
+pre code{background:none;border:0;padding:0}
+.adr{display:flex;gap:1.6rem;align-items:flex-start;flex-wrap:wrap}
+.adr .qr{flex:none;background:#fff;padding:.6rem;border-radius:.6rem;line-height:0}
+.adr .qr svg{width:9rem;height:9rem;display:block}
+.adr .liste{flex:1;min-width:14rem}
+.adr .liste a{display:block;font-size:1.1rem;font-weight:600;color:var(--acc);
+  text-decoration:none;margin:.2rem 0;overflow-wrap:break-word}
+footer{margin-top:3rem;padding-top:1.2rem;border-top:1px solid var(--hair);
+  color:var(--dim);font-size:.85rem}
+@media print{
+  :root{--bg:#fff;--surf:#fff;--txt:#000;--dim:#444;--acc:#000;--hair:#bbb;
+        --warn:#000;--bad:#000;--ok:#000}
+  body{font-size:11pt} .wrap{max-width:none;padding:0}
+  h2{page-break-after:avoid} .enc{page-break-inside:avoid}
+}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>Yuno<em>Arche</em> — page de secours</h1>
+  <div class="sous">Copie de secours du serveur de production, répliquée chaque nuit.</div>
+</header>
+
+<div class="enc att">
+  <strong>Cette page fonctionne quand rien d'autre ne fonctionne.</strong>
+  Elle ne dépend ni de l'authentification, ni de Nextcloud, ni d'une base de
+  données. Si vous la voyez, la machine est debout — imprimez-la ou gardez-en
+  l'adresse.
+</div>
+
+<!-- FRAICHEUR : verdict et date de la dernière réplication, injectés. -->
+{{FRAICHEUR}}
+
+<!-- VOS PROPRES PAGES VIENNENT ICI.
+     Tout fichier .html déposé dans le répertoire servi sur le port de secours
+     (/var/www/arche-secours) est repris tel quel sous la seconde porte, celle
+     du portail : rien à déclarer. C'est l'endroit prévu pour un guide pas à
+     pas, un mode opératoire ou un dossier de crise imprimable — leur contenu
+     dépend de votre organisation, l'outil n'en fournit aucun.
+     Les liens vers ces pages doivent être RELATIFS (« guide.html »), jamais
+     absolus : la page est servie par deux portes et l'adresse IP change. -->
+<div class="enc bien">
+  <p style="margin:0" class="sous">Cette page sert de référence : adresses,
+  interdits, procédures. Elle est produite à l'avance et servie telle quelle —
+  elle ne dépend d'aucun service qui pourrait être mort. Un plan de reprise
+  conservé uniquement sur le serveur en panne n'en est pas un : gardez-en une
+  version imprimée.</p>
+</div>
+
+<h2>Les trois premiers réflexes</h2>
+<ol>
+  <li><strong>Ne rien restaurer tout de suite.</strong> Une restauration écrase.
+      Tant qu'on ignore ce qui s'est passé, on regarde avant d'agir.</li>
+  <li><strong>Isoler la production, pas l'arche.</strong> L'arche est déjà hors
+      d'atteinte : elle ne reçoit rien, elle va chercher. Ne lui ouvrez pas de
+      chemin vers une machine compromise.</li>
+  <li><strong>Ouvrir le coffre de mots de passe en premier.</strong> C'est ce
+      qui manque toujours en premier, et il est à jour.</li>
+</ol>
+
+<h2>Ce qu'il ne faut surtout pas faire</h2>
+<ul class="non">
+  <li><strong>Débrancher l'arche.</strong> Le disque est monté en écriture ; une
+      coupure sèche corrompt les bases — c'est-à-dire la copie même que vous
+      êtes venu chercher. Voir « L'éteindre » plus bas.</li>
+  <li><strong>Rebrancher la production sans l'avoir comprise.</strong> Si elle
+      est compromise, elle le reste, et elle contaminera ce qu'on lui tend.</li>
+  <li><strong>Restaurer par-dessus l'arche pour « voir ».</strong> Une
+      restauration n'est pas réversible : l'état actuel disparaît.</li>
+  <li><strong>Ouvrir un chemin de l'arche vers la production.</strong> Le sens
+      unique est la protection dont toutes les autres dépendent.</li>
+  <li><strong>Travailler dessus la nuit sans suspendre la réplication.</strong>
+      Elle restaure par-dessus et éteint la machine à 2 h. Voir plus bas.</li>
+</ul>
+
+<h2>Comment y accéder</h2>
+<div class="enc">
+  <div class="adr">
+    <div class="qr">{{QR}}</div>
+    <div class="liste">
+      <p class="sous" style="margin-top:0">Cette page, maintenant :</p>
+      {{ADRESSES}}
+      <p class="sous">Scannez le code pour la partager sans rien taper.</p>
+      <p class="sous"><strong>Cette adresse change.</strong> Elle dépend du
+      réseau et du bail DHCP. La page est régénérée toutes les dix minutes :
+      ce que vous lisez ici est à jour, <em>une copie imprimée ou une capture
+      d'écran ne l'est pas</em>. Pour la retrouver : l'écran de la machine
+      (YunoBox), les appareils connectés du partage de connexion, ou le bail
+      DHCP du réseau.</p>
+    </div>
+  </div>
+</div>
+
+<h2>Les services</h2>
+<table>
+  <tr><th>Service</th><th>À quoi il sert maintenant</th></tr>
+  <!-- EXEMPLE À ADAPTER. Ce tableau est le seul endroit du gabarit qui décrit
+       un site : remplacez le domaine « replica.local » par celui du réplica, et
+       les lignes par les services réellement servis. Les liens vers les pages
+       du dispositif, plus bas, sont RELATIFS et n'ont pas à être touchés. -->
+  <tr><td><a href="https://replica.local/vaultwarden">Vaultwarden</a></td>
+      <td>Coffre de mots de passe<span class="q">à ouvrir en premier</span></td></tr>
+  <tr><td><a href="https://replica.local/nextcloud">Nextcloud</a></td>
+      <td>Fichiers, Talk, bureautique en ligne</td></tr>
+  <tr><td><a href="https://replica.local/bookstack">BookStack</a></td>
+      <td>Documentation et procédures</td></tr>
+  <tr><td><a href="https://replica.local/forgejo">Forgejo</a></td>
+      <td>Code et documentation technique</td></tr>
+  <tr><td><a href="https://replica.local/cyberchef">CyberChef</a></td>
+      <td>Décoder et analyser des données</td></tr>
+  <tr><td><a href="https://replica.local/diagram">Diagrams</a></td>
+      <td>Relire une architecture</td></tr>
+  <tr><td><a href="https://replica.local/rss">FreshRSS</a></td><td>Veille</td></tr>
+  <tr><td><a href="https://replica.local/moodle">Moodle</a></td><td>&nbsp;</td></tr>
+  <tr><td><a href="https://replica.local/n8n">n8n</a></td><td>Automatisations</td></tr>
+  <tr><td><a href="https://replica.local/depot">Dépôt</a></td>
+      <td>Images d'installation, ISO, outils<span class="q">administrateurs</span></td></tr>
+  <tr><td><a href="http://kiwix.local/">Kiwix</a></td>
+      <td>Documentation hors ligne : Server Fault, Unix &amp; Linux, wiki d'Arch</td></tr>
+{{MANUELS}}
+  <tr><td><a href="https://replica.local/arche">Arche</a></td>
+      <td>Pilotage du dispositif<span class="q">administrateurs</span></td></tr>
+  <tr><td><a href="{{YUNOBOX}}">YunoBox</a></td>
+      <td>Batterie, réseau, services, disques<span class="q">et les boutons d'extinction et de suspension</span></td></tr>
+</table>
+
+<p class="sous">Les chemins sont <strong>identiques à ceux de la
+production</strong> : un lien mis en favori fonctionne en changeant seulement le
+domaine.</p>
+
+<div class="enc att">
+  <strong>Les liens ci-dessus exigent que <code>replica.local</code> résolve.</strong>
+  Le portail d'authentification refuse l'accès par adresse IP — c'est une limite
+  de YunoHost, pas un réglage. Si les liens ne mènent nulle part, posez d'abord
+  la ligne ci-dessous.
+</div>
+
+<h2>Si les noms ne résolvent pas</h2>
+<p>Les noms en <code>.local</code> passent sur un partage de connexion et sur un
+lien filaire direct, mais <strong>pas sur le réseau de l'établissement</strong>,
+où la diffusion est filtrée. Dans ce cas, ajoutez cette ligne au fichier
+<code>hosts</code> de votre poste :</p>
+
+<pre><code>{{LIGNE_HOSTS}}</code></pre>
+
+<p class="sous"><code>/etc/hosts</code> sur macOS et Linux, avec <code>sudo</code> —
+<code>C:\Windows\System32\drivers\etc\hosts</code> sur Windows, en administrateur.
+L'adresse ci-dessus est celle de l'arche <em>au moment où cette page a été
+engendrée</em> — elle l'est toutes les dix minutes. Si vous lisez une copie, une
+impression ou une capture, vérifiez-la avant de vous y fier.</p>
+
+<h2>Si vous ne savez pas quel outil ouvrir</h2>
+<p>Les <a href="manuels/">manuels hors ligne</a>
+sont rangés dans l'ordre d'une crise — <strong>constater avant de réparer</strong>,
+puis réparer, puis reconstruire — et chacun porte une phrase disant à quoi il
+sert. C'est là qu'il faut commencer quand on hésite.</p>
+
+<div class="enc mal">
+  <p><strong>Le réflexe qui compte.</strong> Avant de réparer quoi que ce soit
+  sur une machine suspecte, collectez ses traces — <strong>DFIR ORC</strong>, le
+  collecteur de l'ANSSI, est dans le dépôt. Réparer détruit les preuves, et l'on
+  ne s'aperçoit qu'après en avoir eu besoin.</p>
+</div>
+
+<h2>L'éteindre</h2>
+<div class="enc mal">
+  <p><strong>Ne coupez jamais l'alimentation.</strong> Deux façons propres, au
+  choix :</p>
+  <p><strong>1. Le bouton « Éteindre »</strong> dans YunoBox —
+  <a href="{{YUNOBOX}}">{{YUNOBOX}}</a>, onglet Services. C'est le plus simple si
+  vous avez un navigateur.</p>
+  <p><strong>2. En ligne de commande</strong>, si vous avez un accès SSH :</p>
+  <pre><code>sudo systemctl halt</code></pre>
+  <p>Attendez que la LED s'éteigne et que le ventilateur s'arrête avant de
+  débrancher.</p>
+</div>
+
+<h2>Travailler la nuit sans être interrompu</h2>
+<p>À 2 h du matin, l'arche restaure la production par-dessus et s'éteint. Si vous
+êtes en train de vous en servir, suspendez-la — <strong>par l'un ou l'autre de
+ces deux chemins, qui écrivent au même endroit</strong> :</p>
+<table>
+  <tr><th>Chemin</th><th>Où</th></tr>
+  <tr><td><strong>YunoBox</strong></td>
+      <td><a href="{{YUNOBOX}}">{{YUNOBOX}}</a> — onglet Services, « Suspendre la
+      réplication »<span class="q">le plus rapide, aucune authentification de
+      portail</span></td></tr>
+  <tr><td><strong>Interface Arche</strong></td>
+      <td><a href="https://replica.local/arche">replica.local/arche</a> — Réglages,
+      « Suspendre jusqu'au »<span class="q">demande le SSO, donc un nom qui
+      résout</span></td></tr>
+</table>
+<p>La reprise est <strong>automatique</strong> à l'échéance, et la suspension est
+plafonnée à sept jours : une suspension oubliée serait un dispositif éteint qui
+se croit actif.</p>
+
+<h2>Qui appeler</h2>
+{{ANNUAIRE}}
+
+<footer>
+  Page générée le {{GENEREE}} par l'arche elle-même. Elle n'exige aucune
+  authentification et se régénère à chaque changement de réseau.<br>
+  La marche à suivre complète est dans <code>docs/mise-en-route.md</code> et
+  <code>docs/reprise.md</code> du dépôt — à garder imprimés, hors des deux
+  machines.
+</footer>
+
+</div>
+</body>
+</html>

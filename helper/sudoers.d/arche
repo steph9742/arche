@@ -1,0 +1,18 @@
+# Arche — autorise la webapp (utilisateur « archeapp », non privilégié) à exécuter
+# le SEUL helper privilégié, sans mot de passe.
+#
+# Modèle de sécurité :
+#  - « arche-helper » est l'unique point d'entrée root. Il REVALIDE tout ce qu'il
+#    reçoit : le fichier /etc/pra/pra.conf qu'il écrit est « source »é par des
+#    scripts root, donc une valeur mal filtrée y serait une exécution de code.
+#  - Les journaux consultables et les actions sur les canaris sont des LISTES
+#    BLANCHES : aucun chemin ni aucune commande fournis par l'appelant ne sont
+#    utilisés tels quels.
+#  - sudo réinitialise l'environnement : les chemins de production codés en dur
+#    dans le helper s'appliquent, non surchargeables par variable d'env.
+#
+# Installé dans /etc/sudoers.d/arche (mode 0440, root:root), à valider par visudo.
+
+Defaults:archeapp !requiretty
+
+archeapp ALL=(root) NOPASSWD: /opt/arche/helper/arche-helper

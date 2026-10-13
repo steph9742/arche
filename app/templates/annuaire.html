@@ -1,0 +1,119 @@
+{% extends "base.html" %}
+{% block title %}Annuaire de crise — Arche{% endblock %}
+
+{% block content %}
+<h1>Annuaire de crise</h1>
+
+<p class="chapo">
+  Les numéros à composer quand la production est tombée. Ils sont repris tels
+  quels sur la <strong>page de secours</strong>, qui s'affiche sans
+  authentification — c'est là qu'on les lira le jour venu.
+</p>
+
+<div class="message message-info">
+  <div>
+    <strong>Pourquoi ici et pas dans Nextcloud.</strong> Si ces numéros ne vivent
+    que sur la production, ils disparaissent avec elle — et personne n'appelle
+    personne. On les saisit au calme ici ; on les lit en urgence là-bas.
+    <br>Gardez-en aussi une <strong>copie imprimée</strong>, hors des deux
+    machines : une page web suppose une machine allumée.
+  </div>
+</div>
+
+<form method="post" action="{{ base }}/annuaire">
+  <input type="hidden" name="{{ csrf_champ }}" value="{{ csrf }}">
+
+  <div class="carte">
+  <table class="annuaire">
+    <thead>
+      <tr>
+        <th>Nom</th><th>Rôle</th><th>Téléphone</th><th>Courriel</th><th>Remarque</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for e in entrees %}
+      <tr>
+        <td><input name="nom" value="{{ e.nom }}" autocomplete="off"></td>
+        <td><input name="role" value="{{ e.role }}" autocomplete="off"></td>
+        <td><input name="telephone" value="{{ e.telephone }}" autocomplete="off"></td>
+        <td><input name="courriel" value="{{ e.courriel }}" autocomplete="off"></td>
+        <td><input name="remarque" value="{{ e.remarque }}" autocomplete="off"></td>
+      </tr>
+      {% endfor %}
+      {# Deux lignes vierges d'avance : sans elles, il faudrait enregistrer pour
+         pouvoir ajouter quelqu'un sur un poste sans JavaScript. Le bouton
+         ci-dessous en ajoute autant qu'on veut quand il est disponible. #}
+      {% for _ in range(2) %}
+      <tr>
+        <td><input name="nom" value="" autocomplete="off" placeholder="Nom et prénom"></td>
+        <td><input name="role" value="" autocomplete="off" placeholder="Rôle ou organisme"></td>
+        <td><input name="telephone" value="" autocomplete="off" placeholder="06 12 34 56 78"></td>
+        <td><input name="courriel" value="" autocomplete="off" placeholder="prenom.nom@exemple.fr"></td>
+        <td><input name="remarque" value="" autocomplete="off" placeholder="Astreinte, horaires…"></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="actions actions-annuaire">
+    <button type="submit" class="bouton bouton-primaire">Enregistrer</button>
+    <button type="button" id="ajouter-ligne" class="bouton" hidden>
+      + Ajouter une ligne
+    </button>
+    {% if modifie %}
+    <span class="discret petit">
+      Modifié le {{ modifie[:10] }} à {{ modifie[11:16] }}
+      {%- if par %} par {{ par }}{% endif %}
+    </span>
+    {% endif %}
+  </div>
+  <p class="aide">
+    Une ligne vide est ignorée. Pour retirer quelqu'un, effacez son nom, son
+    téléphone et son courriel.
+  </p>
+  </div>
+
+
+</form>
+
+<script>
+/* Amélioration progressive : le bouton reste caché si le script ne s'exécute
+   pas, et les deux lignes vierges du gabarit suffisent alors à saisir. On ne
+   dépend donc de rien — c'est la règle de cette application. */
+(function () {
+  var bouton = document.getElementById("ajouter-ligne");
+  var corps = document.querySelector("table.annuaire tbody");
+  if (!bouton || !corps) return;
+  bouton.hidden = false;
+
+  bouton.addEventListener("click", function () {
+    var modele = corps.rows[corps.rows.length - 1];
+    var ligne = modele.cloneNode(true);
+    ligne.querySelectorAll("input").forEach(function (i) { i.value = ""; });
+    ligne.classList.add("nouvelle");
+    corps.appendChild(ligne);
+    /* Le premier champ prend le foyer : on enchaîne la saisie sans viser à la
+       souris, ce qui est tout l'intérêt d'un tableau. */
+    var premier = ligne.querySelector("input");
+    if (premier) premier.focus();
+    /* La classe est retirée une fois l'animation jouée, sinon une ligne
+       ajoutée puis réaffichée clignoterait à nouveau. */
+    setTimeout(function () { ligne.classList.remove("nouvelle"); }, 600);
+  });
+})();
+</script>
+
+<h2>Qui devrait y figurer</h2>
+<ul class="suggestions">
+  <li><strong>La cellule elle-même</strong> — chacun, avec un numéro joignable
+      hors du réseau de l'établissement.</li>
+  <li><strong>Le CERT</strong> dont vous dépendez, et le CERT-FR.</li>
+  <li><strong>L'hébergeur et l'opérateur</strong>, avec les numéros de contrat :
+      on vous les demandera avant de vous parler.</li>
+  <li><strong>L'assurance cyber</strong> — la déclaration a souvent un délai
+      contractuel court.</li>
+  <li><strong>Le juridique et la direction</strong>, pour les décisions qui ne
+      sont pas techniques.</li>
+  <li><strong>Les prestataires</strong> des applications critiques.</li>
+</ul>
+{% endblock %}

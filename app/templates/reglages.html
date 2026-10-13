@@ -1,0 +1,240 @@
+{% extends "base.html" %}
+{% block title %}Réglages — Arche{% endblock %}
+
+{#
+  Chaque réglage porte son explication. Ce ne sont pas des cases anodines :
+  plusieurs décident si l'arche accepte ou refuse de restaurer. Un réglage qu'on
+  ne comprend pas est un réglage qu'on met de travers.
+#}
+
+{% macro champ(r, valeurs, apps, cibles) %}
+<div class="reglage">
+  {% if r.type == "booleen" %}
+    <label class="case" style="display:flex;gap:.5rem;align-items:flex-start">
+      <input type="checkbox" name="{{ r.cle }}" style="width:auto;margin-top:.3rem"
+             {{ "checked" if valeurs.get(r.cle) == "1" }}>
+      <span>{{ r.libelle }}</span>
+    </label>
+
+  {% elif r.type == "choix" %}
+    <label for="{{ r.cle }}">{{ r.libelle }}</label>
+    <select id="{{ r.cle }}" name="{{ r.cle }}">
+      {% for o in r.options %}
+        <option value="{{ o }}" {{ "selected" if valeurs.get(r.cle) == o }}>{{ o|capitaliser }}</option>
+      {% endfor %}
+    </select>
+
+  {% elif r.type == "apps" %}
+    <label>{{ r.libelle }}</label>
+    {% set cochees = (valeurs.get(r.cle) or "").split(" ") %}
+    {% if apps %}
+      <div class="cases">
+        {% for a in apps %}
+          <label class="case">
+            <input type="checkbox" name="{{ r.cle }}" value="{{ a.id }}"
+                   {{ "checked" if a.id in cochees }}>
+            <span><span class="nom">{{ a.nom }}</span><br><span class="cle" style="margin:0">{{ a.id }}</span></span>
+          </label>
+        {% endfor %}
+      </div>
+      {% set connues = apps | map(attribute="id") | list %}
+      {% set orphelines = cochees | reject("in", connues) | reject("equalto", "") | list %}
+      {% if orphelines %}
+        <p class="aide">Écartées mais plus installées : {{ orphelines|join(", ") }}.
+          Elles seront retirées à l'enregistrement.</p>
+      {% endif %}
+    {% else %}
+      <p class="aide">Liste des applications indisponible — saisie libre, noms séparés par des espaces.</p>
+      <textarea name="{{ r.cle }}" rows="3">{{ (valeurs.get(r.cle) or "").replace(" ", "\n") }}</textarea>
+    {% endif %}
+
+  {% elif r.type in ("cibles", "piles") %}
+    {# Liste issue de l'inventaire de la DERNIÈRE exécution. Rien coché = tout
+       est restauré : on le dit, sinon l'utilisateur croit avoir tout désactivé. #}
+    <label>{{ r.libelle }}</label>
+    {% set choisies = (valeurs.get(r.cle) or "").split(" ") | reject("equalto", "") | list %}
+    {% set dispo = (cibles.applications if r.type == "cibles" else cibles.piles) or [] %}
+    {% if dispo %}
+      <div class="cases">
+        {% for c in dispo %}
+          <label class="case">
+            <input type="checkbox" name="{{ r.cle }}" value="{{ c.id }}"
+                   {{ "checked" if (not choisies) or (c.id in choisies) }}>
+            <span class="nom mono">{{ c.id }}</span>
+          </label>
+        {% endfor %}
+      </div>
+      {% if not choisies %}
+        <p class="aide">Aucune sélection enregistrée : <strong>tout est restauré</strong>.
+          Décocher une entrée créera la sélection.</p>
+      {% endif %}
+      {% set connus = dispo | map(attribute="id") | list %}
+      {% set absentes = choisies | reject("in", connus) | list %}
+      {% if absentes %}
+        <p class="aide">Sélectionnées mais absentes du dernier inventaire :
+          {{ absentes|join(", ") }}. Elles seront ignorées avec une trace si
+          elles manquent aussi à l'archive du jour.</p>
+      {% endif %}
+    {% else %}
+      <p class="aide">Inventaire indisponible — aucune exécution enregistrée pour
+        l'instant. Saisie libre, noms séparés par des espaces.</p>
+      <textarea name="{{ r.cle }}" rows="3">{{ (valeurs.get(r.cle) or "").replace(" ", "\n") }}</textarea>
+    {% endif %}
+
+  {% elif r.type == "parties" %}
+    <label>{{ r.libelle }}</label>
+    <div class="cases">
+      {% for o in r.options %}
+        <label class="case">
+          <input type="checkbox" name="{{ r.cle }}" value="{{ o }}"
+                 {{ "checked" if o in (valeurs.get(r.cle) or "").split(" ") }}>
+          <span class="nom mono">{{ o }}</span>
+        </label>
+      {% endfor %}
+    </div>
+
+  {% elif r.type == "liste" %}
+    <label for="{{ r.cle }}">{{ r.libelle }}</label>
+    <textarea id="{{ r.cle }}" name="{{ r.cle }}" rows="4">{{ (valeurs.get(r.cle) or "").replace(" ", "\n") }}</textarea>
+
+  {% elif r.type == "secret" %}
+    <label for="{{ r.cle }}">{{ r.libelle }}</label>
+    <input id="{{ r.cle }}" type="password" name="{{ r.cle }}"
+           value="{{ valeurs.get(r.cle) or '' }}" autocomplete="new-password">
+    <p class="aide">Laisser les points inchangés pour conserver la valeur actuelle.</p>
+
+  {% elif r.type == "datetime" %}
+    <label for="{{ r.cle }}">{{ r.libelle }}</label>
+    {# Le navigateur fournit le sélecteur ; il rend « AAAA-MM-JJTHH:MM », que le
+       validateur accepte au même titre que la forme avec espace. Sur un
+       navigateur qui ignore ce type, le champ retombe en texte et reste
+       saisissable — c'est la raison d'être du motif tolérant. #}
+    <input id="{{ r.cle }}" type="datetime-local" name="{{ r.cle }}"
+           value="{{ (valeurs.get(r.cle) or '').replace(' ', 'T') }}">
+    <div class="prereglages" data-pour="{{ r.cle }}" hidden>
+      <span>Pour :</span>
+      <button type="button" data-heures="4">4 h</button>
+      <button type="button" data-heures="12">12 h</button>
+      <button type="button" data-heures="24">24 h</button>
+      <button type="button" data-heures="72">72 h</button>
+      <button type="button" data-heures="0" class="effacer">Reprendre maintenant</button>
+    </div>
+
+  {% else %}
+    <label for="{{ r.cle }}">{{ r.libelle }}</label>
+    <input id="{{ r.cle }}" type="text" name="{{ r.cle }}" value="{{ valeurs.get(r.cle) or '' }}">
+  {% endif %}
+
+  {% if r.aide %}<p class="aide">{{ r.aide }}</p>{% endif %}
+  <span class="cle">{{ r.cle }}</span>
+</div>
+{% endmacro %}
+
+{% block content %}
+<div class="ligne-titre">
+  <h1>Réglages</h1>
+  <span class="discret petit mono">/etc/pra/pra.conf</span>
+</div>
+
+<p class="petit discret" style="margin-top:-.6rem">
+  Ces valeurs sont écrites dans <code>/etc/pra/pra.conf</code>, que les scripts
+  lisent seuls. Cette interface n'est qu'un éditeur : si elle est arrêtée ou
+  cassée, la réplication nocturne se déroule exactement pareil.
+</p>
+
+<form method="post" action="{{ base }}/reglages">
+  <input type="hidden" name="{{ csrf_champ }}" value="{{ csrf }}">
+
+  {% for id, (titre, sous_titre) in groupes.items() %}
+    <div class="carte">
+      <h2>{{ titre }}</h2>
+      <p class="petit discret">{{ sous_titre }}</p>
+
+      {% for r in reglages if r.groupe == id and not r.avance %}
+        {{ champ(r, valeurs, apps_installees, cibles) }}
+      {% endfor %}
+
+      {% set avances = reglages | selectattr("groupe", "equalto", id) | selectattr("avance") | list %}
+      {% if avances %}
+        <details class="avance">
+          <summary>Réglages avancés</summary>
+          {% for r in avances %}{{ champ(r, valeurs, apps_installees, cibles) }}{% endfor %}
+        </details>
+      {% endif %}
+
+      {% if id == "restauration" and cibles.horodatage_yunohost %}
+        <p class="aide">
+          Inventaire du {{ cibles.horodatage_yunohost[:16]|replace("T", " à ") }}
+          — c'est le décalage de 24 h assumé : la sélection porte sur ce qui
+          existait à la dernière exécution, pas sur l'archive de la nuit à venir.
+        </p>
+      {% endif %}
+
+      {% if id == "notification" %}
+        <p class="aide">
+          Le destinataire est la production. En cas de sinistre majeur — le
+          scénario qui déclenche le plus d'alertes — le message n'arrivera donc
+          pas : le journal local reste la source de vérité.
+        </p>
+      {% endif %}
+    </div>
+  {% endfor %}
+
+  <button class="bouton bouton-primaire" type="submit">Enregistrer</button>
+</form>
+
+<div class="carte" style="margin-top:1.5rem">
+  <h2>Vérifications</h2>
+  <p class="petit discret">
+    Ces actions s'exécutent immédiatement et ne modifient aucun réglage.
+    Déployer crée les fichiers témoins sur la production ; recalculer enregistre
+    leurs empreintes de référence — à refaire après toute modification légitime,
+    sinon la réplication se bloquera.
+  </p>
+  <div class="actions" style="margin-top:1rem">
+    {% for action, libelle in [("deployer","Déployer les canaris"),
+                               ("rebaser","Recalculer les empreintes"),
+                               ("verifier","Vérifier les canaris")] %}
+      {% if role == "arche" or action == "deployer" %}
+      <form method="post" action="{{ base }}/actions/canaris/{{ action }}">
+        <input type="hidden" name="{{ csrf_champ }}" value="{{ csrf }}">
+        <button class="bouton" type="submit">{{ libelle }}</button>
+      </form>
+      {% endif %}
+    {% endfor %}
+    <form method="post" action="{{ base }}/actions/tester-alerte">
+      <input type="hidden" name="{{ csrf_champ }}" value="{{ csrf }}">
+      <button class="bouton" type="submit">Envoyer une alerte d'essai</button>
+    </form>
+  </div>
+</div>
+
+<script>
+/* Préréglages de durée pour les champs de date : « dans 4 h », « dans 24 h »…
+   Amélioration progressive — les boutons restent cachés si le script ne
+   s'exécute pas, et le sélecteur du navigateur suffit alors. */
+(function () {
+  document.querySelectorAll(".prereglages").forEach(function (bloc) {
+    var champ = document.getElementById(bloc.dataset.pour);
+    if (!champ) return;
+    bloc.hidden = false;
+    bloc.addEventListener("click", function (e) {
+      var b = e.target.closest("button[data-heures]");
+      if (!b) return;
+      var h = parseInt(b.dataset.heures, 10);
+      if (!h) { champ.value = ""; champ.focus(); return; }
+      var t = new Date(Date.now() + h * 3600 * 1000);
+      /* On construit la chaîne à la main : toISOString() bascule en UTC, ce qui
+         décalerait l'échéance d'une ou deux heures selon la saison — et une
+         suspension qui se lève deux heures trop tôt est exactement le genre de
+         détail qui se découvre au pire moment. */
+      var p = function (n) { return String(n).padStart(2, "0"); };
+      champ.value = t.getFullYear() + "-" + p(t.getMonth() + 1) + "-" +
+                    p(t.getDate()) + "T" + p(t.getHours()) + ":" + p(t.getMinutes());
+      champ.focus();
+    });
+  });
+})();
+</script>
+
+{% endblock %}

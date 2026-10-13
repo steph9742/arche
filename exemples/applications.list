@@ -1,0 +1,18 @@
+# Applications à restaurer sur le réplica, et URL à leur donner ici.
+#   id|domaine|chemin
+#
+# Un chemin VIDE = « ne pas toucher à l'URL ».
+# Les instances multiples d'un paquet exigent des chemins distincts.
+
+# Servies sur un sous-chemin du domaine principal du réplica :
+dex|arche.local|/dex
+nextcloud|arche.local|/nextcloud
+vaultwarden|arche.local|/vaultwarden
+
+# Servie à la racine d'un domaine dédié en production : lui donner son propre
+# domaine local, car un mandataire racine ne se replie pas sur un sous-chemin
+# sans casser les URL qu'il génère.
+reverseproxy|notes.local|/
+
+# Sans interface web, ou dont l'URL ne doit pas changer :
+coturn||
